@@ -30,48 +30,76 @@ jobs:
               <meta name='viewport' content='width=device-width, initial-scale=1.0'>
               <title>Site Index</title>
               <style>
+                  :root {
+                      --bg: #282828;
+                      --bg1: #3c3836;
+                      --fg: #ebdbb2;
+                      --orange: #fe8019;
+                      --blue: #83a598;
+                      --gray: #928374;
+                  }
                   body {
                       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
                       max-width: 800px;
                       margin: 0 auto;
                       padding: 2rem;
                       line-height: 1.6;
+                      background-color: var(--bg);
+                      color: var(--fg);
                   }
-                  h1 { color: #2c3e50; }
+                  h1 { 
+                      color: var(--orange);
+                      border-bottom: 2px solid var(--bg1);
+                      padding-bottom: 0.5rem;
+                  }
                   .file-list {
                       list-style: none;
                       padding: 0;
                   }
                   .file-list li {
                       margin: 0.5rem 0;
-                      padding: 0.5rem;
-                      border-bottom: 1px solid #eee;
+                      padding: 0.8rem;
+                      border-radius: 4px;
+                      background-color: var(--bg1);
+                      transition: transform 0.2s ease;
+                  }
+                  .file-list li:hover {
+                      transform: translateX(5px);
                   }
                   .file-list a {
-                      color: #3498db;
+                      color: var(--blue);
                       text-decoration: none;
                   }
                   .file-list a:hover {
-                      text-decoration: underline;
+                      color: var(--orange);
+                  }
+                  .last-modified {
+                      color: var(--gray);
+                      font-size: 0.9rem;
+                      margin-left: 1rem;
                   }
                   .last-updated {
-                      color: #7f8c8d;
+                      color: var(--gray);
                       font-size: 0.9rem;
                       margin-top: 2rem;
+                      border-top: 2px solid var(--bg1);
+                      padding-top: 1rem;
                   }
               </style>
           </head>
           <body>
-              <h1>Site Index</h1>
+              <h1>Claude Shares</h1>
               <ul class='file-list'>" > index.html
 
-          # Find all HTML files (excluding index.html itself) and add them to the index
+          # Find all HTML files and add them to the index
           find . -name "*.html" ! -name "index.html" -type f | sort | while read file; do
               # Remove leading ./ from filepath
               clean_path=${file#./}
               # Get last modified date
               last_modified=$(git log -1 --format="%ad" --date=short -- "$file")
-              echo "<li><a href='$clean_path'>$clean_path</a> <span class='last-modified'>($last_modified)</span></li>" >> index.html
+              # Extract title (everything before " - ")
+              title=$(echo "$clean_path" | sed -E 's/^(.*) - .*\.html$/\1/')
+              echo "<li><a href='$clean_path'>$title</a> <span class='last-modified'>($last_modified)</span></li>" >> index.html
           done
 
           echo "</ul>
