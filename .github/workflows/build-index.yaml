@@ -65,6 +65,7 @@ jobs:
                       color: var(--blue);
                       text-decoration: none;
                       display: block;
+                      font-size: 1.5rem;
                   }
                   .file-list a:hover {
                       color: var(--green);
@@ -82,16 +83,6 @@ jobs:
                       border-top: 2px solid var(--bg1);
                       padding-top: 1rem;
                   }
-                  @media (min-width: 640px) {
-                      .file-list a {
-                          display: inline;
-                      }
-                      .last-modified {
-                          display: inline;
-                          margin-top: 0;
-                          margin-left: 1rem;
-                      }
-                  }
               </style>
           </head>
           <body>
@@ -106,7 +97,7 @@ jobs:
               # Remove leading ./ from filepath
               clean_path=${file#./}
               # Extract title (everything before the date)
-              title=$(echo "$clean_path" | sed -E 's/^(.*) - \([0-9]{1,2}_[0-9]{1,2}_[0-9]{4}.*\)\.html$/\1/')
+              title=$(echo "$clean_path" | sed -E 's/^(.*) - Claude \([0-9]{1,2}_[0-9]{1,2}_[0-9]{4}.*\)\.html$/\1/')
               # Extract date and convert to sortable format (YYYY-MM-DD HH:MM:SS)
               date_str=$(echo "$clean_path" | sed -E 's/^.* \(([0-9]{1,2})_([0-9]{1,2})_([0-9]{4}) ([0-9]{1,2})_([0-9]{1,2})_([0-9]{1,2}) (AM|PM)\)\.html$/\3-\1-\2 \4:\5:\6 \7/')
               
