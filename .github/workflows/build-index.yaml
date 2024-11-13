@@ -86,16 +86,32 @@ jobs:
               <h1>Claude Shares</h1>
               <ul class='file-list'>" > index.html
 
-          # Find all HTML files and add them to the index
-          find . -name "*.html" ! -name "index.html" -type f | sort | while read file; do
+          # Create a temporary file to store entries
+          temp_file=$(mktemp)
+
+          # Find all HTML files and process them
+          find . -name "*.html" ! -name "index.html" -type f | while read file; do
               # Remove leading ./ from filepath
               clean_path=${file#./}
-              # Extract title (everything before " - ")
-              title=$(echo "$clean_path" | sed -E 's/^(.*) - .*\.html$/\1/')
-              # Extract date (between " - " and ".html")
-              date=$(echo "$clean_path" | sed -E 's/^.* - (.*)\.html$/\1/')
-              echo "<li><a href='$clean_path'>$title</a> <span class='last-modified'>($date)</span></li>" >> index.html
+              # Extract title (everything before the date)
+              title=$(echo "$clean_path" | sed -E 's/^(.*) \([0-9]{1,2}_[0-9]{1,2}_[0-9]{4}.*\)\.html$/\1/')
+              # Extract date and convert to sortable format (YYYY-MM-DD HH:MM:SS)
+              date_str=$(echo "$clean_path" | sed -E 's/^.* \(([0-9]{1,2})_([0-9]{1,2})_([0-9]{4}) ([0-9]{1,2})_([0-9]{1,2})_([0-9]{1,2}) (AM|PM)\)\.html$/\3-\1-\2 \4:\5:\6 \7/')
+              
+              # Format date for display (Month DD, YYYY at HH:MM PM/AM)
+              display_date=$(date -d "$(echo "$date_str" | sed 's/AM/am/;s/PM/pm/')" "+%B %d, %Y at %I:%M %p" 2>/dev/null)
+              
+              # Store in temporary file: sortable_date|display_date|title|clean_path
+              echo "$date_str|$display_date|$title|$clean_path" >> "$temp_file"
           done
+
+          # Sort by date (newest first) and create list items
+          sort -r -t'|' -k1 "$temp_file" | while IFS='|' read -r sort_date display_date title clean_path; do
+              echo "<li><a href='$clean_path'>$title</a> <span class='last-modified'>($display_date)</span></li>" >> index.html
+          done
+
+          # Clean up temporary file
+          rm "$temp_file"
 
           echo "</ul>
               <div class='last-updated'>
