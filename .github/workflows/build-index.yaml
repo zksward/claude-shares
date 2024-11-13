@@ -1,0 +1,103 @@
+name: Build HTML Index
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          
+      - name: Create index.html
+        run: |
+          echo "<!DOCTYPE html>
+          <html lang='en'>
+          <head>
+              <meta charset='UTF-8'>
+              <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+              <title>Site Index</title>
+              <style>
+                  body {
+                      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                      max-width: 800px;
+                      margin: 0 auto;
+                      padding: 2rem;
+                      line-height: 1.6;
+                  }
+                  h1 { color: #2c3e50; }
+                  .file-list {
+                      list-style: none;
+                      padding: 0;
+                  }
+                  .file-list li {
+                      margin: 0.5rem 0;
+                      padding: 0.5rem;
+                      border-bottom: 1px solid #eee;
+                  }
+                  .file-list a {
+                      color: #3498db;
+                      text-decoration: none;
+                  }
+                  .file-list a:hover {
+                      text-decoration: underline;
+                  }
+                  .last-updated {
+                      color: #7f8c8d;
+                      font-size: 0.9rem;
+                      margin-top: 2rem;
+                  }
+              </style>
+          </head>
+          <body>
+              <h1>Site Index</h1>
+              <ul class='file-list'>" > index.html
+
+          # Find all HTML files (excluding index.html itself) and add them to the index
+          find . -name "*.html" ! -name "index.html" -type f | sort | while read file; do
+              # Remove leading ./ from filepath
+              clean_path=${file#./}
+              # Get last modified date
+              last_modified=$(git log -1 --format="%ad" --date=short -- "$file")
+              # Extract title from HTML file if it exists
+              title=$(grep -i "<title>.*</title>" "$file" | sed -E 's/.*<title>(.*)<\/title>.*/\1/I')
+              # If no title found, use filename
+              if [ -z "$title" ]; then
+                  title=$clean_path
+              fi
+              echo "<li><a href='$clean_path'>$title</a> <span class='last-modified'>($last_modified)</span></li>" >> index.html
+          done
+
+          echo "</ul>
+              <div class='last-updated'>
+                  Last updated: $(date '+%Y-%m-%d %H:%M:%S')
+              </div>
+          </body>
+          </html>" >> index.html
+
+      - name: Commit and push if changed
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # Check if there are any changes
+          if git diff --exit-code index.html; then
+            echo "No changes to index.html"
+            exit 0
+          fi
+          
+          git add index.html
+          git commit -m "Auto-update index.html"
+          git push
