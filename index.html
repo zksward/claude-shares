@@ -5,66 +5,78 @@
     <meta name='viewport' content='width=device-width, initial-scale=1.0'>
     <title>Site Index</title>
     <style>
-      :root {
-          --bg: #282828;
-          --bg1: #3c3836;
-          --fg: #ebdbb2;
-          --purple: #d3869b;
-          --blue: #83a598;
-          --gray: #928374;
-          --green:  #98971a;
-      }
-      body {
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-          max-width: 800px;
-          margin: 0 auto;
-          padding: 2rem;
-          line-height: 1.6;
-          background-color: var(--bg);
-          color: var(--fg);
-      }
-      h1 { 
-          color: var(--purple);
-          border-bottom: 2px solid var(--bg1);
-          padding-bottom: 0.5rem;
-      }
-      .file-list {
-          list-style: none;
-          padding: 0;
-      }
-      .file-list li {
-          margin: 0.5rem 0;
-          padding: 0.5rem;
-      }
-      .file-list a {
-          color: var(--blue);
-          text-decoration: none;
-      }
-      .file-list a:hover {
-          color: var(--green);
-      }
-      .last-modified {
-          color: var(--gray);
-          font-size: 0.9rem;
-          margin-left: 1rem;
-      }
-      .last-updated {
-          color: var(--gray);
-          font-size: 0.9rem;
-          margin-top: 2rem;
-          border-top: 2px solid var(--bg1);
-          padding-top: 1rem;
-      }
+        :root {
+            --bg: #282828;
+            --bg1: #3c3836;
+            --fg: #ebdbb2;
+            --purple: #d3869b;
+            --blue: #83a598;
+            --gray: #928374;
+            --green:  #98971a;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 2rem;
+            line-height: 1.6;
+            background-color: var(--bg);
+            color: var(--fg);
+        }
+        h1 { 
+            color: var(--purple);
+            border-bottom: 2px solid var(--bg1);
+            padding-bottom: 0.5rem;
+        }
+        .file-list {
+            list-style: none;
+            padding: 0;
+        }
+        .file-list li {
+            margin: 0.5rem 0;
+            padding: 0.5rem;
+        }
+        .file-list a {
+            color: var(--blue);
+            text-decoration: none;
+            display: block;
+        }
+        .file-list a:hover {
+            color: var(--green);
+        }
+        .last-modified {
+            color: var(--gray);
+            font-size: 0.9rem;
+            display: block;
+            margin-top: 0.25rem;
+        }
+        .last-updated {
+            color: var(--gray);
+            font-size: 0.9rem;
+            margin-top: 2rem;
+            border-top: 2px solid var(--bg1);
+            padding-top: 1rem;
+        }
+        @media (min-width: 640px) {
+            .file-list a {
+                display: inline;
+            }
+            .last-modified {
+                display: inline;
+                margin-top: 0;
+                margin-left: 1rem;
+            }
+        }
     </style>
 </head>
 <body>
     <h1>Claude Shares</h1>
     <ul class='file-list'>
-<li><a href='The Lies of Interfaces in Software Design - Claude (11_12_2024 8_49_52 PM).html'>The Lies of Interfaces in Software Design - Claude</a> <span class='last-modified'>(November 12, 2024 at 08:49 PM)</span></li>
-<li><a href='Separating Feed Processing Workflow Interface and Implementation - Claude (11_11_2024 9_40_51 PM).html'>Separating Feed Processing Workflow Interface and Implementation - Claude</a> <span class='last-modified'>(November 11, 2024 at 09:40 PM)</span></li>
+<li><a href='The Lies of Interfaces in Software Design - Claude (11_12_2024 8_49_52 PM).html'>The Lies of Interfaces in Software Design - Claude (11_12_2024 8_49_52 PM).html</a> <span class='last-modified'>(November 12, 2024 at 08:49 PM)</span></li>
+<li><a href='Separating Feed Processing Workflow Interface and Implementation - Claude (11_11_2024 9_40_51 PM).html'>Separating Feed Processing Workflow Interface and Implementation - Claude (11_11_2024 9_40_51 PM).html</a> <span class='last-modified'>(November 11, 2024 at 09:40 PM)</span></li>
 </ul>
     <div class='last-updated'>
-        Last updated: 2024-11-13 02:27:31
+        Last updated: 2024-11-13 02:32:17
     </div>
 </body>
 </html>
