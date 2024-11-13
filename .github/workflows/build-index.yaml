@@ -71,13 +71,7 @@ jobs:
               clean_path=${file#./}
               # Get last modified date
               last_modified=$(git log -1 --format="%ad" --date=short -- "$file")
-              # Extract title from HTML file if it exists
-              title=$(grep -i "<title>.*</title>" "$file" | sed -E 's/.*<title>(.*)<\/title>.*/\1/I')
-              # If no title found, use filename
-              if [ -z "$title" ]; then
-                  title=$clean_path
-              fi
-              echo "<li><a href='$clean_path'>$title</a> <span class='last-modified'>($last_modified)</span></li>" >> index.html
+              echo "<li><a href='$clean_path'>$clean_path</a> <span class='last-modified'>($last_modified)</span></li>" >> index.html
           done
 
           echo "</ul>
