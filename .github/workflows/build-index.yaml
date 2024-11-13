@@ -92,12 +92,6 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           
-          # Check if there are any changes
-          if git diff --exit-code index.html; then
-            echo "No changes to index.html"
-            exit 0
-          fi
-          
           git add index.html
           git commit -m "Auto-update index.html"
           git push
