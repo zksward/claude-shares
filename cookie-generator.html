@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .controls {
+            background: #eee;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+        }
+        .controls button {
+            padding: 8px 16px;
+            margin: 0 10px;
+            cursor: pointer;
+            background: #4CAF50;
+            border: none;
+            color: white;
+            border-radius: 4px;
+        }
+        .controls button:hover {
+            background: #45a049;
+        }
+        .controls input {
+            padding: 8px;
+            width: 60px;
+            margin: 0 10px;
+        }
+        .story {
+            background-color: #f9f9f9;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .jar {
+            border: 2px solid #333;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 10px;
+            display: inline-block;
+            width: 45%;
+        }
+        .worksheet-section {
+            margin: 30px 0;
+            border: 1px solid #ccc;
+            padding: 15px;
+            page-break-inside: avoid;
+        }
+        .answer-space {
+            border: 1px dashed #999;
+            min-height: 100px;
+            margin: 10px 0;
+            padding: 10px;
+        }
+        .hint {
+            font-style: italic;
+            color: #666;
+            font-size: 0.9em;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        td, th {
+            border: 1px solid #ccc;
+            padding: 8px;
+            text-align: center;
+        }
+        @media print {
+            .controls {
+                display: none;
+            }
+            body {
+                margin: 0;
+                padding: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <label>Number of cookies per jar:</label>
+        <input type="number" id="listSize" value="5" min="3" max="10">
+        <label>Maximum cookies in a stack:</label>
+        <input type="number" id="maxNumber" value="5" min="3" max="9">
+        <button onclick="generateNewProblem()">Generate New Problem</button>
+        <button onclick="window.print()">Print Worksheet</button>
+    </div>
+
+    <div class="header">
+        <h1>🍪 The Case of the Mixed-Up Cookie Jars 🍪</h1>
+        <p>Name: _______________________  Date: _________________</p>
+    </div>
+
+    <div class="story">
+        <h3>The Story</h3>
+        <p>The North Pole kitchen elves are in a funny situation! They have two cookie jars that are supposed to have the same number of cookies, but something's not quite right. Two elves counted the cookies in each jar and wrote down their lists, but the numbers don't match up!</p>
+    </div>
+
+    <div class="jars-display">
+        <div class="jar">
+            <h3>Jar 1:</h3>
+            <p id="jar1"></p>
+        </div>
+        <div class="jar">
+            <h3>Jar 2:</h3>
+            <p id="jar2"></p>
+        </div>
+    </div>
+
+    <div class="worksheet-section">
+        <h2>Part 1: How Different Are The Jars?</h2>
+        <p>Follow these steps:</p>
+        <ol>
+            <li>Put the numbers from each jar in order from smallest to biggest</li>
+            <li>Match them up (first number with first number, second with second, and so on)</li>
+            <li>Find how far apart each pair of numbers is</li>
+            <li>Add up all the differences</li>
+        </ol>
+
+        <div class="answer-space">
+            <p>Write your ordered numbers here:</p>
+            <p>Jar 1 (ordered): __________________________</p>
+            <p>Jar 2 (ordered): __________________________</p>
+            
+            <div id="difference-table"></div>
+
+            <p>Total difference: _____________</p>
+        </div>
+    </div>
+
+    <div class="worksheet-section">
+        <h2>Part 2: Finding Cookie Twins</h2>
+        <p>Some numbers appear in both jars! Let's find these "cookie twins":</p>
+        <ol>
+            <li>Take each number from Jar 1</li>
+            <li>Count how many times it appears in Jar 2</li>
+            <li>Multiply these numbers together</li>
+            <li>Add up all the results</li>
+        </ol>
+
+        <div class="answer-space">
+            <div id="twins-table"></div>
+            <p>Cookie twin score (add up all multiplications): _____________</p>
+        </div>
+    </div>
+
+    <div class="hint">
+        <p>Remember: Take your time and check your work! You can do it! 🌟</p>
+        <p id="solution" style="display: none; color: #666;"></p>
+    </div>
+
+    <script>
+        function generateRandomList(size, maxNum) {
+            return Array.from({length: size}, () => Math.floor(Math.random() * maxNum) + 1);
+        }
+
+        function createTable(rows) {
+            let tableHTML = `
+                <table>
+                    <tr>
+                        <th>Jar 1 Number</th>
+                        <th>Jar 2 Number</th>
+                        <th>Difference</th>
+                    </tr>`;
+            
+            for (let i = 0; i < rows; i++) {
+                tableHTML += `
+                    <tr>
+                        <td>___</td>
+                        <td>___</td>
+                        <td>___</td>
+                    </tr>`;
+            }
+            
+            tableHTML += '</table>';
+            return tableHTML;
+        }
+
+        function createTwinsTable(rows) {
+            let tableHTML = `
+                <table>
+                    <tr>
+                        <th>Number from Jar 1</th>
+                        <th>Times it appears in Jar 2</th>
+                        <th>Multiplication</th>
+                    </tr>`;
+            
+            for (let i = 0; i < rows; i++) {
+                tableHTML += `
+                    <tr>
+                        <td>___</td>
+                        <td>___</td>
+                        <td>___</td>
+                    </tr>`;
+            }
+            
+            tableHTML += '</table>';
+            return tableHTML;
+        }
+
+        function calculateSolution(list1, list2) {
+            // Part 1: Total difference
+            const sorted1 = [...list1].sort((a, b) => a - b);
+            const sorted2 = [...list2].sort((a, b) => a - b);
+            let totalDiff = 0;
+            for (let i = 0; i < sorted1.length; i++) {
+                totalDiff += Math.abs(sorted1[i] - sorted2[i]);
+            }
+
+            // Part 2: Cookie twins
+            let twinScore = 0;
+            for (let num of list1) {
+                const count = list2.filter(x => x === num).length;
+                twinScore += num * count;
+            }
+
+            return {
+                difference: totalDiff,
+                twinScore: twinScore
+            };
+        }
+
+        function generateNewProblem() {
+            const size = parseInt(document.getElementById('listSize').value);
+            const maxNum = parseInt(document.getElementById('maxNumber').value);
+            
+            const list1 = generateRandomList(size, maxNum);
+            const list2 = generateRandomList(size, maxNum);
+
+            document.getElementById('jar1').textContent = list1.join(', ');
+            document.getElementById('jar2').textContent = list2.join(', ');
+            
+            document.getElementById('difference-table').innerHTML = createTable(size);
+            document.getElementById('twins-table').innerHTML = createTwinsTable(size);
+
+            const solution = calculateSolution(list1, list2);
+            document.getElementById('solution').innerHTML = 
+                `Teacher's key - Part 1 answer: ${solution.difference}, Part 2 answer: ${solution.twinScore}`;
+        }
+
+        // Generate initial problem on page load
+        generateNewProblem();
+    </script>
+</body>
+</html>
