@@ -28,7 +28,7 @@ jobs:
           <head>
               <meta charset='UTF-8'>
               <meta name='viewport' content='width=device-width, initial-scale=1.0'>
-              <link rel="shortcut icon" type="image/x-icon" href="./favicon.ico">
+              <link rel='shortcut icon' type='image/x-icon' href='./favicon.ico'>
               <title>zksward - Claude Shares</title>
               <style>
                   :root {
@@ -89,41 +89,89 @@ jobs:
           <body>
               <h1>Claude Shares</h1>
               <ul class='file-list'>" > index.html
-
-          # Create a temporary file to store entries
+      
           temp_file=$(mktemp)
-
-          # Find all HTML files and process them
+      
+          # Find all HTML files except index.html
           find . -name "*.html" ! -name "index.html" -type f | while read file; do
-              # Remove leading ./ from filepath
               clean_path=${file#./}
-              # Extract title (everything before the date)
-              title=$(echo "$clean_path" | sed -E 's/^(.*) - Claude \([0-9]{1,2}_[0-9]{1,2}_[0-9]{4}.*\)\.html$/\1/')
-              # Extract date and convert to sortable format (YYYY-MM-DD HH:MM:SS)
-              date_str=$(echo "$clean_path" | sed -E 's/^.* \(([0-9]{1,2})_([0-9]{1,2})_([0-9]{4}) ([0-9]{1,2})_([0-9]{1,2})_([0-9]{1,2}) (AM|PM)\)\.html$/\3-\1-\2 \4:\5:\6 \7/')
+      
+              # Extract the portion before " - Claude (" to guess title
+              # This assumes the filename pattern includes " - Claude (" somewhere
+              # If not found, fallback to the filename without extension
+              raw_title=$(echo "$clean_path" | sed -E 's/(.*) - Claude \(.*\)\.html/\1/')
+              if [ "$raw_title" = "$clean_path" ]; then
+                  # Failed to extract by that pattern, fallback to base name without extension
+                  raw_title=$(basename "$clean_path" .html)
+              fi
+              title="$raw_title"
+      
+              # Attempt to extract a date portion. We try underscores first, then colons.
+              # Pattern 1 (underscore): (MM_DD_YYYY HH_MM_SS AM/PM)
+              underscore_date=$(echo "$clean_path" | grep -oE '[0-9]{1,2}_[0-9]{1,2}_[0-9]{4} [0-9]{1,2}_[0-9]{1,2}_[0-9]{1,2} (AM|PM)' || true)
+              # Pattern 2 (colon): (MM_DD_YYYY HH:MM:SS AM/PM)
+              colon_date=$(echo "$clean_path" | grep -oE '[0-9]{1,2}_[0-9]{1,2}_[0-9]{4} [0-9]{1,2}:[0-9]{1,2}:[0-9]{1,2} (AM|PM)' || true)
+      
+              sortable_date=""
+              display_date="Unknown Date"
               
-              # Format date for display (Month DD, YYYY at HH:MM PM/AM)
-              display_date=$(date -d "$(echo "$date_str" | sed 's/AM/am/;s/PM/pm/')" "+%B %d, %Y at %I:%M %p" 2>/dev/null)
-              
-              # Store in temporary file: sortable_date|display_date|title|clean_path
-              echo "$date_str|$display_date|$title|$clean_path" >> "$temp_file"
+              if [ -n "$underscore_date" ]; then
+                  # Convert underscores to colons and then to a sortable date
+                  # underscore_date looks like: MM_DD_YYYY HH_MM_SS AM/PM
+                  # Convert HH_MM_SS to HH:MM:SS
+                  converted_time=$(echo "$underscore_date" | sed -E 's/([0-9]{1,2})_([0-9]{1,2})_([0-9]{1,2})/\1:\2:\3/')
+                  # Now we have something like: MM_DD_YYYY HH:MM:SS AM/PM
+                  # Extract parts
+                  mm=$(echo "$converted_time" | sed -E 's/^([0-9]{1,2})_([0-9]{1,2})_([0-9]{4}).*/\1/')
+                  dd=$(echo "$converted_time" | sed -E 's/^([0-9]{1,2})_([0-9]{1,2})_[0-9]{4}.*/\2/')
+                  yyyy=$(echo "$converted_time" | sed -E 's/^[0-9]{1,2}_[0-9]{1,2}_([0-9]{4}).*/\1/')
+                  time_part=$(echo "$converted_time" | sed -E 's/^[0-9]{1,2}_[0-9]{1,2}_[0-9]{4} (.*)/\1/')
+                  sortable_date="$yyyy-$mm-$dd $time_part"
+              elif [ -n "$colon_date" ]; then
+                  # colon_date looks like: MM_DD_YYYY HH:MM:SS AM/PM
+                  mm=$(echo "$colon_date" | sed -E 's/^([0-9]{1,2})_([0-9]{1,2})_([0-9]{4}).*/\1/')
+                  dd=$(echo "$colon_date" | sed -E 's/^([0-9]{1,2})_([0-9]{1,2})_[0-9]{4}.*/\2/')
+                  yyyy=$(echo "$colon_date" | sed -E 's/^[0-9]{1,2}_[0-9]{1,2}_([0-9]{4}).*/\1/')
+                  time_part=$(echo "$colon_date" | sed -E 's/^[0-9]{1,2}_[0-9]{1,2}_[0-9]{4} (.*)/\1/')
+                  sortable_date="$yyyy-$mm-$dd $time_part"
+              fi
+      
+              # Try converting sortable_date to a user-friendly format if we have a sortable_date
+              if [ -n "$sortable_date" ]; then
+                  # Convert AM/PM to lowercase for `date -d` compatibility
+                  display_date_attempt=$(date -d "$(echo "$sortable_date" | sed 's/AM/am/;s/PM/pm/')" "+%B %d, %Y at %I:%M:%S %p" 2>/dev/null || true)
+                  if [ -n "$display_date_attempt" ]; then
+                      display_date="$display_date_attempt"
+                  else
+                      # If date parsing fails, keep Unknown Date
+                      display_date="Unknown Date"
+                      sortable_date=""
+                  fi
+              fi
+      
+              # If no date could be parsed, we can assign a sortable date as "very old"
+              # to sort them at the bottom, or use the current time. For now, let's just use epoch start.
+              if [ -z "$sortable_date" ]; then
+                  sortable_date="1970-01-01 00:00:00 AM"
+              fi
+      
+              echo "$sortable_date|$display_date|$title|$clean_path" >> "$temp_file"
           done
-
-          # Sort by date (newest first) and create list items
+      
+          # Sort by date (newest first)
           sort -r -t'|' -k1 "$temp_file" | while IFS='|' read -r sort_date display_date title clean_path; do
               echo "<li><a href='$clean_path'>$title</a> <span class='last-modified'>($display_date)</span></li>" >> index.html
           done
-
-          # Clean up temporary file
+      
           rm "$temp_file"
-
+          
           echo "</ul>
               <div class='last-updated'>
                   Last updated: $(date '+%Y-%m-%d %H:%M:%S')
               </div>
           </body>
           </html>" >> index.html
-
+          
       - name: Commit and push if changed
         run: |
           git config --local user.email "action@github.com"
