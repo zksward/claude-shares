@@ -92,43 +92,34 @@ jobs:
       
           temp_file=$(mktemp)
       
-          # Find all HTML files except index.html
           find . -name "*.html" ! -name "index.html" -type f | while read file; do
               clean_path=${file#./}
       
-              # Extract the portion before " - Claude (" to guess title
-              # This assumes the filename pattern includes " - Claude (" somewhere
-              # If not found, fallback to the filename without extension
+              # Extract title from filename (try to remove " - Claude (....)")
               raw_title=$(echo "$clean_path" | sed -E 's/(.*) - Claude \(.*\)\.html/\1/')
               if [ "$raw_title" = "$clean_path" ]; then
-                  # Failed to extract by that pattern, fallback to base name without extension
+                  # fallback if pattern not found
                   raw_title=$(basename "$clean_path" .html)
               fi
               title="$raw_title"
       
-              # Attempt to extract a date portion. We try underscores first, then colons.
-              # Pattern 1 (underscore): (MM_DD_YYYY HH_MM_SS AM/PM)
+              # Try to extract a date from filename in multiple common formats
               underscore_date=$(echo "$clean_path" | grep -oE '[0-9]{1,2}_[0-9]{1,2}_[0-9]{4} [0-9]{1,2}_[0-9]{1,2}_[0-9]{1,2} (AM|PM)' || true)
-              # Pattern 2 (colon): (MM_DD_YYYY HH:MM:SS AM/PM)
               colon_date=$(echo "$clean_path" | grep -oE '[0-9]{1,2}_[0-9]{1,2}_[0-9]{4} [0-9]{1,2}:[0-9]{1,2}:[0-9]{1,2} (AM|PM)' || true)
       
               sortable_date=""
               display_date="Unknown Date"
-              
+      
               if [ -n "$underscore_date" ]; then
-                  # Convert underscores to colons and then to a sortable date
-                  # underscore_date looks like: MM_DD_YYYY HH_MM_SS AM/PM
-                  # Convert HH_MM_SS to HH:MM:SS
+                  # Convert underscores in time to colons
                   converted_time=$(echo "$underscore_date" | sed -E 's/([0-9]{1,2})_([0-9]{1,2})_([0-9]{1,2})/\1:\2:\3/')
-                  # Now we have something like: MM_DD_YYYY HH:MM:SS AM/PM
-                  # Extract parts
                   mm=$(echo "$converted_time" | sed -E 's/^([0-9]{1,2})_([0-9]{1,2})_([0-9]{4}).*/\1/')
                   dd=$(echo "$converted_time" | sed -E 's/^([0-9]{1,2})_([0-9]{1,2})_[0-9]{4}.*/\2/')
                   yyyy=$(echo "$converted_time" | sed -E 's/^[0-9]{1,2}_[0-9]{1,2}_([0-9]{4}).*/\1/')
                   time_part=$(echo "$converted_time" | sed -E 's/^[0-9]{1,2}_[0-9]{1,2}_[0-9]{4} (.*)/\1/')
                   sortable_date="$yyyy-$mm-$dd $time_part"
               elif [ -n "$colon_date" ]; then
-                  # colon_date looks like: MM_DD_YYYY HH:MM:SS AM/PM
+                  # Already in colon format
                   mm=$(echo "$colon_date" | sed -E 's/^([0-9]{1,2})_([0-9]{1,2})_([0-9]{4}).*/\1/')
                   dd=$(echo "$colon_date" | sed -E 's/^([0-9]{1,2})_([0-9]{1,2})_[0-9]{4}.*/\2/')
                   yyyy=$(echo "$colon_date" | sed -E 's/^[0-9]{1,2}_[0-9]{1,2}_([0-9]{4}).*/\1/')
@@ -136,23 +127,42 @@ jobs:
                   sortable_date="$yyyy-$mm-$dd $time_part"
               fi
       
-              # Try converting sortable_date to a user-friendly format if we have a sortable_date
+              # If we got a sortable_date, try to convert it
               if [ -n "$sortable_date" ]; then
-                  # Convert AM/PM to lowercase for `date -d` compatibility
                   display_date_attempt=$(date -d "$(echo "$sortable_date" | sed 's/AM/am/;s/PM/pm/')" "+%B %d, %Y at %I:%M:%S %p" 2>/dev/null || true)
                   if [ -n "$display_date_attempt" ]; then
                       display_date="$display_date_attempt"
                   else
-                      # If date parsing fails, keep Unknown Date
-                      display_date="Unknown Date"
+                      # If date parsing fails, clear sortable_date
                       sortable_date=""
                   fi
               fi
       
-              # If no date could be parsed, we can assign a sortable date as "very old"
-              # to sort them at the bottom, or use the current time. For now, let's just use epoch start.
+              # If we still have no sortable_date from the filename, fallback to git date
               if [ -z "$sortable_date" ]; then
-                  sortable_date="1970-01-01 00:00:00 AM"
+                  # Get the earliest commit date (when file was first added)
+                  git_date=$(git log --diff-filter=A --follow --format=%cd --date=iso-strict -1 -- "$file" 2>/dev/null || true)
+      
+                  if [ -n "$git_date" ]; then
+                      # git_date looks like YYYY-MM-DDTHH:MM:SS+ZZ:ZZ
+                      # Convert it using date
+                      # Remove the timezone offset for parsing
+                      iso_str=$(echo "$git_date" | sed 's/+.*//')
+                      display_date_attempt=$(date -d "$iso_str" "+%B %d, %Y at %I:%M:%S %p" 2>/dev/null || true)
+                      if [ -n "$display_date_attempt" ]; then
+                          display_date="$display_date_attempt"
+                          # For sorting, just use the iso_str as is but space-replace T
+                          sortable_date=$(echo "$iso_str" | sed 's/T/ /')
+                      else
+                          # Could not parse, fallback to a fixed old date
+                          sortable_date="1970-01-01 00:00:00"
+                          display_date="Unknown Date"
+                      fi
+                  else
+                      # No git date found, fallback
+                      sortable_date="1970-01-01 00:00:00"
+                      display_date="Unknown Date"
+                  fi
               fi
       
               echo "$sortable_date|$display_date|$title|$clean_path" >> "$temp_file"
@@ -164,7 +174,7 @@ jobs:
           done
       
           rm "$temp_file"
-          
+      
           echo "</ul>
               <div class='last-updated'>
                   Last updated: $(date '+%Y-%m-%d %H:%M:%S')
