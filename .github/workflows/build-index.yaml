@@ -16,8 +16,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-      
+          fetch-depth: 0  # Ensure full history to get accurate commit dates
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -91,104 +91,52 @@ jobs:
           <body>
               <h1>Claude Shares</h1>
               <ul class='file-list'>" > index.html
-      
+
           temp_file=$(mktemp)
-      
+
+          # Find all HTML files except index.html
           find . -name "*.html" ! -name "index.html" -type f | while read file; do
               clean_path=${file#./}
-      
-              # Extract title from filename (try to remove " - Claude (....)")
-              raw_title=$(echo "$clean_path" | sed -E 's/(.*) - Claude \(.*\)\.html/\1/')
-              if [ "$raw_title" = "$clean_path" ]; then
-                  # fallback if pattern not found
-                  raw_title=$(basename "$clean_path" .html)
+              title=$(basename "$clean_path" .html)
+
+              # Get the last commit date (ISO format) from Git
+              git_date=$(git log -1 --format=%cd --date=iso-strict -- "$file" 2>/dev/null || true)
+
+              if [ -n "$git_date" ]; then
+                  # Convert ISO date (e.g., 2024-11-21T12:45:07+00:00) to a friendly format
+                  # Strip off timezone for parsing
+                  iso_str=$(echo "$git_date" | sed 's/+.*//')
+                  display_date=$(date -d "$iso_str" "+%B %d, %Y at %I:%M:%S %p" 2>/dev/null || echo "Unknown Date")
+                  
+                  # Sortable date: use ISO date minus the 'T' and timezone
+                  sortable_date=$(echo "$iso_str" | sed 's/T/ /')
+              else
+                  # No date found, fallback
+                  display_date="Unknown Date"
+                  sortable_date="1970-01-01 00:00:00"
               fi
-              title="$raw_title"
-      
-              # Try to extract a date from filename in multiple common formats
-              underscore_date=$(echo "$clean_path" | grep -oE '[0-9]{1,2}_[0-9]{1,2}_[0-9]{4} [0-9]{1,2}_[0-9]{1,2}_[0-9]{1,2} (AM|PM)' || true)
-              colon_date=$(echo "$clean_path" | grep -oE '[0-9]{1,2}_[0-9]{1,2}_[0-9]{4} [0-9]{1,2}:[0-9]{1,2}:[0-9]{1,2} (AM|PM)' || true)
-      
-              sortable_date=""
-              display_date="Unknown Date"
-      
-              if [ -n "$underscore_date" ]; then
-                  # Convert underscores in time to colons
-                  converted_time=$(echo "$underscore_date" | sed -E 's/([0-9]{1,2})_([0-9]{1,2})_([0-9]{1,2})/\1:\2:\3/')
-                  mm=$(echo "$converted_time" | sed -E 's/^([0-9]{1,2})_([0-9]{1,2})_([0-9]{4}).*/\1/')
-                  dd=$(echo "$converted_time" | sed -E 's/^([0-9]{1,2})_([0-9]{1,2})_[0-9]{4}.*/\2/')
-                  yyyy=$(echo "$converted_time" | sed -E 's/^[0-9]{1,2}_[0-9]{1,2}_([0-9]{4}).*/\1/')
-                  time_part=$(echo "$converted_time" | sed -E 's/^[0-9]{1,2}_[0-9]{1,2}_[0-9]{4} (.*)/\1/')
-                  sortable_date="$yyyy-$mm-$dd $time_part"
-              elif [ -n "$colon_date" ]; then
-                  # Already in colon format
-                  mm=$(echo "$colon_date" | sed -E 's/^([0-9]{1,2})_([0-9]{1,2})_([0-9]{4}).*/\1/')
-                  dd=$(echo "$colon_date" | sed -E 's/^([0-9]{1,2})_([0-9]{1,2})_[0-9]{4}.*/\2/')
-                  yyyy=$(echo "$colon_date" | sed -E 's/^[0-9]{1,2}_[0-9]{1,2}_([0-9]{4}).*/\1/')
-                  time_part=$(echo "$colon_date" | sed -E 's/^[0-9]{1,2}_[0-9]{1,2}_[0-9]{4} (.*)/\1/')
-                  sortable_date="$yyyy-$mm-$dd $time_part"
-              fi
-      
-              # If we got a sortable_date, try to convert it
-              if [ -n "$sortable_date" ]; then
-                  display_date_attempt=$(date -d "$(echo "$sortable_date" | sed 's/AM/am/;s/PM/pm/')" "+%B %d, %Y at %I:%M:%S %p" 2>/dev/null || true)
-                  if [ -n "$display_date_attempt" ]; then
-                      display_date="$display_date_attempt"
-                  else
-                      # If date parsing fails, clear sortable_date
-                      sortable_date=""
-                  fi
-              fi
-      
-              # If we still have no sortable_date from the filename, fallback to git date
-              if [ -z "$sortable_date" ]; then
-                  # Get the earliest commit date (when file was first added)
-                  git_date=$(git log --diff-filter=A --follow --format=%cd --date=iso-strict -1 -- "$file" 2>/dev/null || true)
-      
-                  if [ -n "$git_date" ]; then
-                      # git_date looks like YYYY-MM-DDTHH:MM:SS+ZZ:ZZ
-                      # Convert it using date
-                      # Remove the timezone offset for parsing
-                      iso_str=$(echo "$git_date" | sed 's/+.*//')
-                      display_date_attempt=$(date -d "$iso_str" "+%B %d, %Y at %I:%M:%S %p" 2>/dev/null || true)
-                      if [ -n "$display_date_attempt" ]; then
-                          display_date="$display_date_attempt"
-                          # For sorting, just use the iso_str as is but space-replace T
-                          sortable_date=$(echo "$iso_str" | sed 's/T/ /')
-                      else
-                          # Could not parse, fallback to a fixed old date
-                          sortable_date="1970-01-01 00:00:00"
-                          display_date="Unknown Date"
-                      fi
-                  else
-                      # No git date found, fallback
-                      sortable_date="1970-01-01 00:00:00"
-                      display_date="Unknown Date"
-                  fi
-              fi
-      
+
               echo "$sortable_date|$display_date|$title|$clean_path" >> "$temp_file"
           done
-      
+
           # Sort by date (newest first)
           sort -r -t'|' -k1 "$temp_file" | while IFS='|' read -r sort_date display_date title clean_path; do
               echo "<li><a href='$clean_path'>$title</a> <span class='last-modified'>($display_date)</span></li>" >> index.html
           done
-      
+
           rm "$temp_file"
-      
+
           echo "</ul>
               <div class='last-updated'>
                   Last updated: $(date '+%Y-%m-%d %H:%M:%S')
               </div>
           </body>
           </html>" >> index.html
-          
+
       - name: Commit and push if changed
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          
           git add index.html
-          git commit -m "Auto-update index.html"
-          git push
+          git commit -m "Auto-update index.html" || echo "No changes to commit"
+          git push || echo "Nothing to push"
