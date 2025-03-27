@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Ant Battle Simulator</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: Arial, sans-serif;
+    }
+    canvas {
+      display: block;
+    }
+    #info {
+      position: absolute;
+      top: 10px;
+      width: 100%;
+      text-align: center;
+      color: white;
+      pointer-events: none;
+    }
+    #controls {
+      position: absolute;
+      bottom: 20px;
+      width: 100%;
+      text-align: center;
+      display: flex;
+      justify-content: space-around;
+    }
+    .team-controls {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background-color: rgba(0, 0, 0, 0.5);
+      padding: 10px;
+      border-radius: 10px;
+    }
+    button {
+      margin: 5px;
+      padding: 10px;
+      border: none;
+      border-radius: 5px;
+      font-weight: bold;
+      cursor: pointer;
+      font-size: 16px;
+      min-width: 120px;
+    }
+    .red-team button {
+      background-color: #ff6666;
+    }
+    .blue-team button {
+      background-color: #6666ff;
+    }
+    #team-toggle {
+      position: absolute;
+      top: 50px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 10px 20px;
+      font-size: 18px;
+      background-color: #444;
+      color: white;
+      border: none;
+      border-radius: 5px;
+    }
+  </style>
+</head>
+<body>
+  <div id="info">Ant Battle Simulator</div>
+  
+  <button id="team-toggle">Current Team: Red</button>
+  
+  <div id="controls">
+    <div class="team-controls red-team">
+      <button class="spawn-button" data-team="red" data-type="worker">Worker Ant</button>
+      <button class="spawn-button" data-team="red" data-type="soldier">Soldier Ant</button>
+      <button class="spawn-button" data-team="red" data-type="scout">Scout Ant</button>
+    </div>
+    
+    <div class="team-controls blue-team">
+      <button class="spawn-button" data-team="blue" data-type="worker">Worker Ant</button>
+      <button class="spawn-button" data-team="blue" data-type="soldier">Soldier Ant</button>
+      <button class="spawn-button" data-team="blue" data-type="scout">Scout Ant</button>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+  <script>
+    // Game variables
+    let scene, camera, renderer;
+    let ground;
+    let ants = [];
+    let currentTeam = "red";
+    let arenaSize = 50;
+    let clock = new THREE.Clock();
+    
+    // Ant properties
+    const antTypes = {
+      worker: { 
+        speed: 3.5, 
+        health: 100, 
+        damage: 20, 
+        attackRate: 1,
+        scale: 1.0
+      },
+      soldier: { 
+        speed: 2.5, 
+        health: 200, 
+        damage: 40, 
+        attackRate: 0.7,
+        scale: 1.5
+      },
+      scout: { 
+        speed: 5, 
+        health: 70, 
+        damage: 15, 
+        attackRate: 1.5,
+        scale: 0.8
+      }
+    };
+    
+    // Initialize the 3D scene
+    function init() {
+      // Scene setup
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x228B22); // Forest green background
+      
+      // Camera setup
+      const aspect = window.innerWidth / window.innerHeight;
+      camera = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
+      camera.position.set(0, 40, 40);
+      camera.lookAt(0, 0, 0);
+      
+      // Renderer setup
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.shadowMap.enabled = true;
+      document.body.appendChild(renderer.domElement);
+      
+      // Lighting
+      const ambientLight = new THREE.AmbientLight(0x404040);
+      scene.add(ambientLight);
+      
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+      directionalLight.position.set(10, 30, 10);
+      directionalLight.castShadow = true;
+      directionalLight.shadow.camera.left = -arenaSize;
+      directionalLight.shadow.camera.right = arenaSize;
+      directionalLight.shadow.camera.top = arenaSize;
+      directionalLight.shadow.camera.bottom = -arenaSize;
+      scene.add(directionalLight);
+      
+      // Ground
+      const groundGeometry = new THREE.PlaneGeometry(arenaSize * 2, arenaSize * 2);
+      const groundMaterial = new THREE.MeshStandardMaterial({ 
+        color: 0x553311,
+        roughness: 0.8,
+      });
+      ground = new THREE.Mesh(groundGeometry, groundMaterial);
+      ground.rotation.x = -Math.PI / 2;
+      ground.receiveShadow = true;
+      scene.add(ground);
+      
+      // Arena boundary
+      const borderMaterial = new THREE.LineBasicMaterial({ color: 0xffffff });
+      const borderGeometry = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-arenaSize, 0, -arenaSize),
+        new THREE.Vector3(arenaSize, 0, -arenaSize),
+        new THREE.Vector3(arenaSize, 0, arenaSize),
+        new THREE.Vector3(-arenaSize, 0, arenaSize),
+        new THREE.Vector3(-arenaSize, 0, -arenaSize)
+      ]);
+      const border = new THREE.Line(borderGeometry, borderMaterial);
+      scene.add(border);
+      
+      // Event listeners
+      window.addEventListener('resize', onWindowResize);
+      
+      // UI controls
+      document.getElementById('team-toggle').addEventListener('click', toggleTeam);
+      document.querySelectorAll('.spawn-button').forEach(button => {
+        button.addEventListener('click', function() {
+          const team = this.getAttribute('data-team');
+          const type = this.getAttribute('data-type');
+          spawnAnt(team, type);
+        });
+      });
+      
+      // Start animation loop
+      animate();
+    }
+    
+    function toggleTeam() {
+      currentTeam = currentTeam === "red" ? "blue" : "red";
+      document.getElementById('team-toggle').textContent = `Current Team: ${currentTeam.charAt(0).toUpperCase() + currentTeam.slice(1)}`;
+    }
+    
+    function spawnAnt(team, type) {
+      // Random position within team's side of the arena
+      const xMultiplier = team === "red" ? -1 : 1;
+      const x = xMultiplier * (Math.random() * (arenaSize / 2 - 5) + 5);
+      const z = Math.random() * arenaSize - arenaSize / 2;
+      
+      // Create ant
+      const ant = createAnt(x, z, team, type);
+      ants.push(ant);
+    }
+    
+    function createAnt(x, z, team, type) {
+      const typeProps = antTypes[type];
+      
+      // Create ant body
+      const bodyGeometry = new THREE.ConeGeometry(1, 2, 8);
+      const bodyMaterial = new THREE.MeshStandardMaterial({ 
+        color: team === "red" ? 0xff0000 : 0x0000ff,
+        roughness: 0.7
+      });
+      const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+      body.rotation.x = Math.PI / 2;
+      body.castShadow = true;
+      
+      // Create ant head
+      const headGeometry = new THREE.SphereGeometry(0.7, 8, 8);
+      const headMaterial = new THREE.MeshStandardMaterial({ 
+        color: team === "red" ? 0xdd0000 : 0x0000dd,
+        roughness: 0.7
+      });
+      const head = new THREE.Mesh(headGeometry, headMaterial);
+      head.position.y = 1.2;
+      head.castShadow = true;
+      
+      // Create ant legs
+      const legMaterial = new THREE.MeshStandardMaterial({ 
+        color: team === "red" ? 0xbb0000 : 0x0000bb,
+        roughness: 0.8
+      });
+      
+      const legGroup = new THREE.Group();
+      const legPositions = [
+        [-0.7, 0, 0.3], [0.7, 0, 0.3],
+        [-0.8, 0, 0], [0.8, 0, 0],
+        [-0.7, 0, -0.3], [0.7, 0, -0.3]
+      ];
+      
+      for (const [x, y, z] of legPositions) {
+        const legGeometry = new THREE.CylinderGeometry(0.1, 0.1, 1.2, 4);
+        const leg = new THREE.Mesh(legGeometry, legMaterial);
+        leg.position.set(x, y, z);
+        leg.rotation.x = Math.PI / 4;
+        leg.castShadow = true;
+        legGroup.add(leg);
+      }
+      
+      // Create ant group
+      const antGroup = new THREE.Group();
+      antGroup.add(body);
+      antGroup.add(head);
+      antGroup.add(legGroup);
+      
+      // Scale based on ant type
+      antGroup.scale.set(typeProps.scale, typeProps.scale, typeProps.scale);
+      
+      // Position ant
+      antGroup.position.set(x, 0.5 * typeProps.scale, z);
+      scene.add(antGroup);
+      
+      // Return ant object with properties
+      return {
+        mesh: antGroup,
+        team: team,
+        type: type,
+        health: typeProps.health,
+        maxHealth: typeProps.health,
+        damage: typeProps.damage,
+        speed: typeProps.speed,
+        attackRate: typeProps.attackRate,
+        attackCooldown: 0,
+        target: null,
+        state: "seeking", // seeking, attacking, dead
+      };
+    }
+    
+    function createExplosion(position, color) {
+      const particleCount = 30;
+      const particleGroup = new THREE.Group();
+      
+      for (let i = 0; i < particleCount; i++) {
+        const size = Math.random() * 0.5 + 0.2;
+        const geometry = new THREE.SphereGeometry(size, 4, 4);
+        const material = new THREE.MeshBasicMaterial({ 
+          color: color,
+          transparent: true,
+          opacity: 0.8
+        });
+        
+        const particle = new THREE.Mesh(geometry, material);
+        
+        // Random position offset
+        const angle = Math.random() * Math.PI * 2;
+        const radius = Math.random() * 2;
+        particle.position.set(
+          position.x + Math.cos(angle) * radius,
+          position.y + Math.random() * 2,
+          position.z + Math.sin(angle) * radius
+        );
+        
+        // Random velocity
+        particle.userData.velocity = new THREE.Vector3(
+          (Math.random() - 0.5) * 5,
+          Math.random() * 5 + 2,
+          (Math.random() - 0.5) * 5
+        );
+        
+        // Add to group
+        particleGroup.add(particle);
+      }
+      
+      particleGroup.userData.lifetime = 1.0; // seconds
+      particleGroup.userData.age = 0;
+      
+      scene.add(particleGroup);
+      return particleGroup;
+    }
+    
+    function updateExplosions(explosions, delta) {
+      for (let i = explosions.length - 1; i >= 0; i--) {
+        const explosion = explosions[i];
+        explosion.userData.age += delta;
+        
+        // Remove old explosions
+        if (explosion.userData.age >= explosion.userData.lifetime) {
+          scene.remove(explosion);
+          explosions.splice(i, 1);
+          continue;
+        }
+        
+        // Update particles
+        const progress = explosion.userData.age / explosion.userData.lifetime;
+        explosion.children.forEach(particle => {
+          particle.position.add(
+            particle.userData.velocity.clone().multiplyScalar(delta)
+          );
+          
+          // Apply gravity
+          particle.userData.velocity.y -= 9.8 * delta;
+          
+          // Fade out
+          particle.material.opacity = 0.8 * (1 - progress);
+        });
+      }
+    }
+    
+    function updateAnts(delta) {
+      for (let i = ants.length - 1; i >= 0; i--) {
+        const ant = ants[i];
+        
+        // Skip dead ants
+        if (ant.state === "dead") continue;
+        
+        // Handle attack cooldown
+        if (ant.attackCooldown > 0) {
+          ant.attackCooldown -= delta;
+        }
+        
+        // Find target if needed
+        if (!ant.target || ant.target.state === "dead") {
+          ant.state = "seeking";
+          ant.target = findNearestEnemy(ant);
+        }
+        
+        // Move towards target or attack
+        if (ant.target) {
+          const targetPosition = ant.target.mesh.position.clone();
+          const direction = new THREE.Vector3()
+            .subVectors(targetPosition, ant.mesh.position)
+            .normalize();
+          
+          // Calculate distance to target
+          const distance = ant.mesh.position.distanceTo(targetPosition);
+          
+          // If close enough to attack
+          if (distance < 2) {
+            ant.state = "attacking";
+            
+            // Face target
+            ant.mesh.lookAt(targetPosition);
+            
+            // Attack if cooldown ready
+            if (ant.attackCooldown <= 0) {
+              attack(ant, ant.target);
+              ant.attackCooldown = 1 / ant.attackRate;
+            }
+          } else {
+            // Move towards target
+            ant.state = "seeking";
+            ant.mesh.position.add(
+              direction.multiplyScalar(ant.speed * delta)
+            );
+            ant.mesh.lookAt(targetPosition);
+          }
+        }
+      }
+    }
+    
+    function attack(attacker, target) {
+      // Apply damage
+      target.health -= attacker.damage;
+      
+      // Check if target dies
+      if (target.health <= 0) {
+        killAnt(target);
+      }
+    }
+    
+    function killAnt(ant) {
+      ant.state = "dead";
+      
+      // Create explosion
+      const explosionColor = ant.team === "red" ? 0xff5555 : 0x5555ff;
+      const explosion = createExplosion(ant.mesh.position, explosionColor);
+      explosions.push(explosion);
+      
+      // Remove ant mesh
+      scene.remove(ant.mesh);
+    }
+    
+    function findNearestEnemy(ant) {
+      let nearestEnemy = null;
+      let nearestDistance = Infinity;
+      
+      for (const otherAnt of ants) {
+        // Skip if same team or dead
+        if (otherAnt.team === ant.team || otherAnt.state === "dead") {
+          continue;
+        }
+        
+        const distance = ant.mesh.position.distanceTo(otherAnt.mesh.position);
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          nearestEnemy = otherAnt;
+        }
+      }
+      
+      return nearestEnemy;
+    }
+    
+    // Handle window resizing
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+    
+    // Animation loop
+    let explosions = [];
+    function animate() {
+      requestAnimationFrame(animate);
+      
+      const delta = clock.getDelta();
+      
+      // Update ants
+      updateAnts(delta);
+      
+      // Update explosions
+      updateExplosions(explosions, delta);
+      
+      // Render scene
+      renderer.render(scene, camera);
+    }
+    
+    // Start the game
+    init();
+  </script>
+</body>
+</html>
