@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ant Colony Simulator</title>
+    <style>
+        /* Reset styles and base setup */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            background-color: #222;
+        }
+
+        /* Main app container */
+        .app-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+
+        /* Game canvas container */
+        .game-canvas {
+            width: 800px;
+            height: 600px;
+            max-width: 100%;
+            flex: 1;
+            max-height: 100%;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+            border-radius: 8px;
+            overflow: hidden;
+            position: relative;
+            margin: 10px 0;
+        }
+
+        .game-canvas canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Loading screen */
+        .loading-screen {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100%;
+            width: 100%;
+            background-color: #222;
+            color: white;
+            font-size: 1.5rem;
+        }
+
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 5px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: #4CAF50;
+            animation: spin 1s ease-in-out infinite;
+            margin-bottom: 20px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Top bar styles */
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            background-color: rgba(0, 0, 0, 0.7);
+            border-radius: 10px;
+            padding: 10px 20px;
+            color: white;
+            min-height: 60px;
+            width: 100%;
+            max-width: 800px;
+            box-sizing: border-box;
+        }
+
+        .stat-group {
+            display: flex;
+            gap: 20px;
+        }
+
+        .stat {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            opacity: 0.8;
+        }
+
+        .stat-value {
+            font-size: 1.2rem;
+            font-weight: bold;
+        }
+
+        .boost-active {
+            color: #FFD700;
+            animation: pulse 1.5s infinite;
+        }
+
+        .resource-display {
+            display: flex;
+            gap: 15px;
+        }
+
+        .resource {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .resource-icon {
+            font-size: 1.5rem;
+        }
+
+        .resource-amount {
+            font-size: 1.2rem;
+            font-weight: bold;
+        }
+
+        /* Bottom toolbar styles */
+        .bottom-toolbar {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            background-color: rgba(0, 0, 0, 0.7);
+            border-radius: 10px;
+            padding: 10px;
+            width: 100%;
+            max-width: 800px;
+            box-sizing: border-box;
+        }
+
+        .ui-button {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 10px 15px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 4px 2px;
+            transition-duration: 0.4s;
+            cursor: pointer;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+
+        .ui-button:hover:not(:disabled) {
+            background-color: white;
+            color: black;
+            transform: translateY(-2px);
+        }
+
+        .ui-button:disabled {
+            background-color: #cccccc;
+            color: #666666;
+            cursor: not-allowed;
+        }
+
+        .spawn-button { background-color: #4CAF50; }
+        .collect-button { background-color: #2196F3; }
+        .upgrade-button { background-color: #9C27B0; }
+        .boost-button { background-color: #FF9800; }
+        .prestige-button { background-color: #F44336; }
+
+        /* Info modal */
+        .info-modal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            z-index: 100;
+        }
+
+        /* Animations */
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
+
+        /* Responsive adjustments */
+        @media (max-width: 820px) {
+            .game-canvas {
+                width: 100%;
+                border-radius: 0;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .bottom-toolbar {
+                flex-wrap: wrap;
+            }
+            
+            .ui-button {
+                font-size: 14px;
+                padding: 8px 12px;
+            }
+            
+            .stat-group {
+                gap: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="root">
+        <div class="loading-screen">
+            <div class="loading-spinner"></div>
+            <p>Loading Ant Colony...</p>
+        </div>
+    </div>
+
+    <script>
+        // Ant Colony Simulator - Complete Game Implementation
+
+        // Game constants
+        const CANVAS_WIDTH = 800;
+        const CANVAS_HEIGHT = 600;
+        const BACKGROUND_COLOR = '#f5f5dc';
+        const ANT_COLORS = [
+            '#000000', // Tier 1: Black
+            '#8B4513', // Tier 2: Brown
+            '#FF0000', // Tier 3: Red
+            '#F5DEB3', // Tier 4: Wheat
+            '#FFD700', // Tier 5: Gold
+            '#00FFFF', // Tier 6: Cyan
+            '#800080', // Tier 7: Purple
+            '#00FF00', // Tier 8: Lime
+            '#FFFF00', // Tier 9: Yellow
+            '#87CEEB'  // Tier 10: Sky Blue
+        ];
+
+        // Ant tier calculations
+        const BASE_HEALTH = 10;
+        const BASE_DAMAGE = 2;
+        const BASE_RESOURCE_YIELD = 1;
+        const TIER_HEALTH_MULTIPLIER = 1.5;
+        const TIER_DAMAGE_MULTIPLIER = 1.5;
+        const TIER_RESOURCE_MULTIPLIER = 1.3;
+
+        // Default colony settings
+        const DEFAULT_COLONY = {
+            maxSlots: 6,
+            autoSpawnInterval: 10000,
+            lastAutoSpawn: 0,
+            resourceMultiplier: 1.0,
+            resourceMultiplierEndTime: 0,
+            maxTier: 1,
+            prestigeLevel: 0,
+            prestigeBonus: 1.0
+        };
+
+        // Game state
+        let gameState = {
+            ants: [],
+            colony: { ...DEFAULT_COLONY },
+            resources: 100,
+            gems: 5,
+            draggedAntId: null,
+            canvas: null,
+            ctx: null,
+            isDragging: false,
+            dragOffset: { x: 0, y: 0 }
+        };
+
+        // Utility functions
+        function randomId() {
+            return `ant-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        }
+
+        function getRandomPosition(ants, width, height) {
+            const maxTries = 10;
+            let tries = 0;
+            
+            while (tries < maxTries) {
+                const x = Math.random() * width;
+                const y = Math.random() * height;
+                
+                const isFarEnough = ants.every(ant => {
+                    const dx = ant.position.x - x;
+                    const dy = ant.position.y - y;
+                    return Math.sqrt(dx * dx + dy * dy) > 50;
+                });
+                
+                if (isFarEnough) {
+                    return { x, y };
+                }
+                
+                tries++;
+            }
+            
+            return {
+                x: Math.random() * width,
+                y: Math.random() * height
+            };
+        }
+
+        function getAntSize(tier) {
+            return 10 + (tier * 3);
+        }
+
+        function formatNumber(num) {
+            if (num >= 1000000) {
+                return `${(num / 1000000).toFixed(1)}M`;
+            } else if (num >= 1000) {
+                return `${(num / 1000).toFixed(1)}K`;
+            } else {
+                return Math.floor(num).toString();
+            }
+        }
+
+        // Ant model functions
+        function createAnt(tier, position) {
+            return {
+                id: randomId(),
+                tier,
+                health: BASE_HEALTH * Math.pow(TIER_HEALTH_MULTIPLIER, tier - 1),
+                damage: BASE_DAMAGE * Math.pow(TIER_DAMAGE_MULTIPLIER, tier - 1),
+                resourceYield: BASE_RESOURCE_YIELD * Math.pow(TIER_RESOURCE_MULTIPLIER, tier - 1),
+                position,
+                isBeingDragged: false,
+                lastHarvest: Date.now()
+            };
+        }
+
+        function mergeAnts(ant1, ant2) {
+            if (ant1.tier !== ant2.tier) {
+                return null;
+            }
+            
+            const midPosition = {
+                x: (ant1.position.x + ant2.position.x) / 2,
+                y: (ant1.position.y + ant2.position.y) / 2
+            };
+            
+            return createAnt(ant1.tier + 1, midPosition);
+        }
+
+        function calculateResourceYield(ant, currentTime) {
+            const timeElapsed = (currentTime - ant.lastHarvest) / 1000;
+            return Math.floor(ant.resourceYield * timeElapsed);
+        }
+
+        // Colony model functions
+        function getSlotUpgradeCost(currentSlots) {
+            return Math.floor(50 * Math.pow(1.5, currentSlots - 6));
+        }
+
+        function getAutoSpawnUpgradeCost(currentInterval) {
+            const factor = 10000 / currentInterval;
+            return Math.floor(100 * Math.pow(factor, 1.5));
+        }
+
+        // Game actions
+        function spawnAnt(position) {
+            if (gameState.ants.length >= gameState.colony.maxSlots) {
+                console.log("Colony at max capacity");
+                return;
+            }
+            
+            if (gameState.resources < 10) {
+                console.log("Not enough resources");
+                return;
+            }
+            
+            const pos = position || getRandomPosition(gameState.ants, CANVAS_WIDTH, CANVAS_HEIGHT);
+            const newAnt = createAnt(1, pos);
+            
+            gameState.ants.push(newAnt);
+            gameState.resources -= 10;
+            updateUI();
+        }
+
+        function dragAnt(antId, position) {
+            gameState.ants = gameState.ants.map(ant => 
+                ant.id === antId ? { ...ant, position, isBeingDragged: true } : ant
+            );
+            gameState.draggedAntId = antId;
+            gameState.isDragging = true;
+        }
+
+        function dropAnt(antId, position) {
+            const droppedAnt = gameState.ants.find(ant => ant.id === antId);
+            if (!droppedAnt) return;
+            
+            const overlapAnt = gameState.ants.find(ant => 
+                ant.id !== antId && 
+                ant.tier === droppedAnt.tier &&
+                !ant.isBeingDragged &&
+                Math.hypot(ant.position.x - position.x, ant.position.y - position.y) < 50
+            );
+            
+            if (overlapAnt) {
+                const mergedAnt = mergeAnts(droppedAnt, overlapAnt);
+                if (mergedAnt) {
+                    gameState.ants = gameState.ants.filter(ant => ant.id !== antId && ant.id !== overlapAnt.id);
+                    gameState.ants.push(mergedAnt);
+                    gameState.colony.maxTier = Math.max(gameState.colony.maxTier, mergedAnt.tier);
+                }
+            } else {
+                gameState.ants = gameState.ants.map(ant => 
+                    ant.id === antId ? { ...ant, position, isBeingDragged: false } : ant
+                );
+            }
+            
+            gameState.draggedAntId = null;
+            gameState.isDragging = false;
+            updateUI();
+        }
+
+        function upgradeColonySlots() {
+            const cost = getSlotUpgradeCost(gameState.colony.maxSlots);
+            
+            if (gameState.resources < cost) {
+                console.log("Not enough resources for upgrade");
+                return;
+            }
+            
+            gameState.colony.maxSlots += 1;
+            gameState.resources -= cost;
+            updateUI();
+        }
+
+        function upgradeAutoSpawn() {
+            const cost = getAutoSpawnUpgradeCost(gameState.colony.autoSpawnInterval);
+            
+            if (gameState.resources < cost) {
+                console.log("Not enough resources for upgrade");
+                return;
+            }
+            
+            gameState.colony.autoSpawnInterval = Math.max(1000, gameState.colony.autoSpawnInterval * 0.9);
+            gameState.resources -= cost;
+            updateUI();
+        }
+
+        function collectResources() {
+            const now = Date.now();
+            let totalResources = 0;
+            
+            gameState.ants = gameState.ants.map(ant => {
+                const resourceYield = calculateResourceYield(ant, now);
+                totalResources += resourceYield;
+                return {
+                    ...ant,
+                    lastHarvest: now
+                };
+            });
+            
+            const colonyMultiplier = now < gameState.colony.resourceMultiplierEndTime 
+                ? gameState.colony.resourceMultiplier 
+                : 1.0;
+                
+            totalResources = Math.floor(totalResources * colonyMultiplier * gameState.colony.prestigeBonus);
+            
+            gameState.resources += totalResources;
+            gameState.colony.resourceMultiplier = now < gameState.colony.resourceMultiplierEndTime 
+                ? gameState.colony.resourceMultiplier 
+                : 1.0;
+            
+            updateUI();
+        }
+
+        function buyResourceBoost() {
+            if (gameState.gems < 1) {
+                console.log("Not enough gems");
+                return;
+            }
+            
+            gameState.gems -= 1;
+            gameState.colony.resourceMultiplier = 2.0;
+            gameState.colony.resourceMultiplierEndTime = Date.now() + 30000;
+            updateUI();
+        }
+
+        function prestige() {
+            if (gameState.colony.maxTier < 10) {
+                console.log("Must reach tier 10 to prestige");
+                return;
+            }
+            
+            gameState.ants = [];
+            gameState.colony = {
+                ...DEFAULT_COLONY,
+                prestigeLevel: gameState.colony.prestigeLevel + 1,
+                prestigeBonus: gameState.colony.prestigeBonus + 0.1
+            };
+            gameState.resources = 100;
+            gameState.gems += 5;
+            updateUI();
+        }
+
+        // Canvas rendering
+        function drawAnt(ctx, ant) {
+            const size = getAntSize(ant.tier);
+            const color = ANT_COLORS[(ant.tier - 1) % ANT_COLORS.length];
+            
+            ctx.fillStyle = color;
+            ctx.globalAlpha = ant.isBeingDragged ? 0.7 : 1.0;
+            
+            const scale = ant.isBeingDragged ? 1.1 : 1.0;
+            const scaledSize = size * scale;
+            
+            // Draw ant body
+            ctx.beginPath();
+            ctx.ellipse(ant.position.x, ant.position.y, scaledSize, scaledSize * 0.6, 0, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            // Draw head
+            ctx.beginPath();
+            ctx.arc(ant.position.x + scaledSize * 0.8, ant.position.y, scaledSize * 0.4, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            // Draw abdomen
+            ctx.beginPath();
+            ctx.arc(ant.position.x - scaledSize * 0.8, ant.position.y, scaledSize * 0.5, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            ctx.globalAlpha = 1.0;
+        }
+
+        function render() {
+            if (!gameState.ctx) return;
+            
+            const ctx = gameState.ctx;
+            
+            // Clear canvas
+            ctx.fillStyle = BACKGROUND_COLOR;
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            
+            // Draw ants
+            gameState.ants.forEach(ant => {
+                drawAnt(ctx, ant);
+            });
+        }
+
+        // UI updates
+        function updateUI() {
+            const colony = gameState.colony;
+            const slotUpgradeCost = getSlotUpgradeCost(colony.maxSlots);
+            const autoSpawnUpgradeCost = getAutoSpawnUpgradeCost(colony.autoSpawnInterval);
+            
+            // Update stats
+            document.getElementById('ant-count').textContent = `${gameState.ants.length} / ${colony.maxSlots}`;
+            document.getElementById('max-tier').textContent = colony.maxTier;
+            
+            // Update resources
+            document.getElementById('resources').textContent = formatNumber(gameState.resources);
+            document.getElementById('gems').textContent = gameState.gems;
+            
+            // Update buttons
+            document.getElementById('spawn-btn').disabled = 
+                gameState.ants.length >= colony.maxSlots || gameState.resources < 10;
+            document.getElementById('slot-upgrade-btn').disabled = gameState.resources < slotUpgradeCost;
+            document.getElementById('autospawn-upgrade-btn').disabled = 
+                gameState.resources < autoSpawnUpgradeCost || colony.autoSpawnInterval <= 1000;
+            document.getElementById('boost-btn').disabled = 
+                gameState.gems < 1 || Date.now() < colony.resourceMultiplierEndTime;
+            document.getElementById('prestige-btn').disabled = colony.maxTier < 10;
+            
+            // Update button texts
+            document.getElementById('slot-upgrade-btn').textContent = 
+                `Upgrade Slots (${formatNumber(slotUpgradeCost)} 🍃)`;
+            document.getElementById('autospawn-upgrade-btn').textContent = 
+                `Upgrade Auto-Spawn (${formatNumber(autoSpawnUpgradeCost)} 🍃)`;
+        }
+
+        function updateAutoSpawnTimer() {
+            const timeSinceLastSpawn = Date.now() - gameState.colony.lastAutoSpawn;
+            const timeUntilNextSpawn = Math.max(0, gameState.colony.autoSpawnInterval - timeSinceLastSpawn);
+            const secondsUntilNextSpawn = (timeUntilNextSpawn / 1000).toFixed(1);
+            document.getElementById('autospawn-timer').textContent = `${secondsUntilNextSpawn}s`;
+            
+            // Update boost timer
+            const boostActive = Date.now() < gameState.colony.resourceMultiplierEndTime;
+            const boostElement = document.getElementById('boost-timer');
+            if (boostActive) {
+                const boostTimeRemaining = Math.max(0, (gameState.colony.resourceMultiplierEndTime - Date.now()) / 1000).toFixed(1);
+                boostElement.textContent = `${boostTimeRemaining}s`;
+                boostElement.parentElement.style.display = 'flex';
+            } else {
+                boostElement.parentElement.style.display = 'none';
+            }
+            
+            // Update prestige info
+            const prestigeInfo = document.getElementById('prestige-info');
+            if (gameState.colony.maxTier >= 8 && gameState.colony.maxTier < 10) {
+                prestigeInfo.style.display = 'block';
+                document.getElementById('current-tier').textContent = gameState.colony.maxTier;
+            } else {
+                prestigeInfo.style.display = 'none';
+            }
+        }
+
+        // Mouse/touch event handling
+        function getMousePos(canvas, evt) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            return {
+                x: (evt.clientX - rect.left) * scaleX,
+                y: (evt.clientY - rect.top) * scaleY
+            };
+        }
+
+        function getTouchPos(canvas, evt) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            return {
+                x: (evt.touches[0].clientX - rect.left) * scaleX,
+                y: (evt.touches[0].clientY - rect.top) * scaleY
+            };
+        }
+
+        function findAntAtPosition(x, y) {
+            return gameState.ants.find(ant => {
+                const size = getAntSize(ant.tier);
+                const dx = ant.position.x - x;
+                const dy = ant.position.y - y;
+                return Math.sqrt(dx * dx + dy * dy) <= size;
+            });
+        }
+
+        function handleStart(x, y) {
+            const ant = findAntAtPosition(x, y);
+            if (ant) {
+                gameState.dragOffset = {
+                    x: x - ant.position.x,
+                    y: y - ant.position.y
+                };
+                dragAnt(ant.id, { x: x - gameState.dragOffset.x, y: y - gameState.dragOffset.y });
+            }
+        }
+
+        function handleMove(x, y) {
+            if (gameState.isDragging && gameState.draggedAntId) {
+                dragAnt(gameState.draggedAntId, { 
+                    x: x - gameState.dragOffset.x, 
+                    y: y - gameState.dragOffset.y 
+                });
+            }
+        }
+
+        function handleEnd(x, y) {
+            if (gameState.isDragging && gameState.draggedAntId) {
+                dropAnt(gameState.draggedAntId, { 
+                    x: x - gameState.dragOffset.x, 
+                    y: y - gameState.dragOffset.y 
+                });
+            }
+        }
+
+        // Game loop
+        function tick() {
+            const now = Date.now();
+            
+            // Auto-spawn logic
+            if (now - gameState.colony.lastAutoSpawn >= gameState.colony.autoSpawnInterval && 
+                gameState.ants.length < gameState.colony.maxSlots && 
+                gameState.resources >= 10) {
+                
+                const pos = getRandomPosition(gameState.ants, CANVAS_WIDTH, CANVAS_HEIGHT);
+                const newAnt = createAnt(1, pos);
+                gameState.ants.push(newAnt);
+                gameState.resources -= 10;
+                gameState.colony.lastAutoSpawn = now;
+                updateUI();
+            }
+            
+            updateAutoSpawnTimer();
+        }
+
+        // Save/Load
+        function saveGame() {
+            const saveData = {
+                ants: gameState.ants,
+                colony: gameState.colony,
+                resources: gameState.resources,
+                gems: gameState.gems
+            };
+            localStorage.setItem('antColonyState', JSON.stringify(saveData));
+        }
+
+        function loadGame() {
+            const saved = localStorage.getItem('antColonyState');
+            if (saved) {
+                try {
+                    const data = JSON.parse(saved);
+                    gameState.ants = data.ants || [];
+                    gameState.colony = data.colony || { ...DEFAULT_COLONY };
+                    gameState.resources = data.resources || 100;
+                    gameState.gems = data.gems || 5;
+                } catch (e) {
+                    console.error("Failed to load saved game:", e);
+                }
+            }
+        }
+
+        // Initialize game
+        function initGame() {
+            // Create UI
+            const root = document.getElementById('root');
+            root.innerHTML = `
+                <div class="app-container">
+                    <div class="top-bar">
+                        <div class="stat-group">
+                            <div class="stat">
+                                <span class="stat-label">Ants:</span>
+                                <span class="stat-value" id="ant-count">0 / 6</span>
+                            </div>
+                            <div class="stat">
+                                <span class="stat-label">Max Tier:</span>
+                                <span class="stat-value" id="max-tier">1</span>
+                            </div>
+                            <div class="stat">
+                                <span class="stat-label">Auto-Spawn:</span>
+                                <span class="stat-value" id="autospawn-timer">10.0s</span>
+                            </div>
+                            <div class="stat boost-active" style="display: none;">
+                                <span class="stat-label">Boost:</span>
+                                <span class="stat-value" id="boost-timer">0.0s</span>
+                            </div>
+                        </div>
+                        
+                        <div class="resource-display">
+                            <div class="resource">
+                                <span class="resource-icon">🍃</span>
+                                <span class="resource-amount" id="resources">100</span>
+                            </div>
+                            <div class="resource">
+                                <span class="resource-icon">💎</span>
+                                <span class="resource-amount" id="gems">5</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="game-canvas">
+                        <canvas id="game-canvas" width="${CANVAS_WIDTH}" height="${CANVAS_HEIGHT}"></canvas>
+                    </div>
+
+                    <div class="bottom-toolbar">
+                        <button class="ui-button spawn-button" id="spawn-btn">Spawn Ant (10 🍃)</button>
+                        <button class="ui-button collect-button" id="collect-btn">Collect Resources</button>
+                        <button class="ui-button upgrade-button" id="slot-upgrade-btn">Upgrade Slots (50 🍃)</button>
+                        <button class="ui-button upgrade-button" id="autospawn-upgrade-btn">Upgrade Auto-Spawn (100 🍃)</button>
+                        <button class="ui-button boost-button" id="boost-btn">2x Resources (1 💎)</button>
+                        <button class="ui-button prestige-button" id="prestige-btn">Prestige (+10%)</button>
+                    </div>
+                    
+                    <div class="info-modal" id="prestige-info" style="display: none;">
+                        <p>Reach tier 10 to prestige and earn permanent bonuses!</p>
+                        <p>Current tier: <span id="current-tier">1</span>/10</p>
+                    </div>
+                </div>
+            `;
+            
+            // Get canvas and context
+            gameState.canvas = document.getElementById('game-canvas');
+            gameState.ctx = gameState.canvas.getContext('2d');
+            
+            // Load saved game
+            loadGame();
+            
+            // Set up event listeners
+            document.getElementById('spawn-btn').addEventListener('click', () => spawnAnt());
+            document.getElementById('collect-btn').addEventListener('click', collectResources);
+            document.getElementById('slot-upgrade-btn').addEventListener('click', upgradeColonySlots);
+            document.getElementById('autospawn-upgrade-btn').addEventListener('click', upgradeAutoSpawn);
+            document.getElementById('boost-btn').addEventListener('click', buyResourceBoost);
+            document.getElementById('prestige-btn').addEventListener('click', prestige);
+            
+            // Canvas mouse events
+            gameState.canvas.addEventListener('mousedown', (e) => {
+                const pos = getMousePos(gameState.canvas, e);
+                handleStart(pos.x, pos.y);
+            });
+            
+            gameState.canvas.addEventListener('mousemove', (e) => {
+                const pos = getMousePos(gameState.canvas, e);
+                handleMove(pos.x, pos.y);
+            });
+            
+            gameState.canvas.addEventListener('mouseup', (e) => {
+                const pos = getMousePos(gameState.canvas, e);
+                handleEnd(pos.x, pos.y);
+            });
+            
+            // Touch events
+            gameState.canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                const pos = getTouchPos(gameState.canvas, e);
+                handleStart(pos.x, pos.y);
+            });
+            
+            gameState.canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                const pos = getTouchPos(gameState.canvas, e);
+                handleMove(pos.x, pos.y);
+            });
+            
+            gameState.canvas.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                if (e.changedTouches.length > 0) {
+                    const touch = e.changedTouches[0];
+                    const rect = gameState.canvas.getBoundingClientRect();
+                    const scaleX = gameState.canvas.width / rect.width;
+                    const scaleY = gameState.canvas.height / rect.height;
+                    const pos = {
+                        x: (touch.clientX - rect.left) * scaleX,
+                        y: (touch.clientY - rect.top) * scaleY
+                    };
+                    handleEnd(pos.x, pos.y);
+                }
+            });
+            
+            // Start game loops
+            setInterval(tick, 1000);
+            setInterval(render, 16); // 60fps
+            setInterval(saveGame, 5000); // Auto-save every 5 seconds
+            
+            // Save on page unload
+            window.addEventListener('beforeunload', saveGame);
+            
+            // If no ants, spawn one to get started
+            if (gameState.ants.length === 0) {
+                spawnAnt();
+            }
+            
+            updateUI();
+        }
+
+        // Start the game once page loads
+        window.addEventListener('load', () => {
+            setTimeout(initGame, 500);
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>String Art Simulator</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+
+        .container {
+            display: flex;
+            gap: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .canvas-container {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        #canvas {
+            border: 2px solid #333;
+            cursor: crosshair;
+            background: #fafafa;
+        }
+
+        .controls {
+            width: 280px;
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            height: fit-content;
+        }
+
+        .control-section {
+            margin-bottom: 25px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .control-section:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+        }
+
+        h3 {
+            margin: 0 0 15px 0;
+            color: #333;
+            font-size: 16px;
+        }
+
+        .control-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+            font-size: 14px;
+        }
+
+        input[type="range"] {
+            width: 100%;
+            margin-bottom: 5px;
+        }
+
+        input[type="color"] {
+            width: 100%;
+            height: 40px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        button {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 8px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+        .mode-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .mode-buttons button {
+            margin-bottom: 0;
+        }
+
+        .active {
+            background: #28a745 !important;
+        }
+
+        .active:hover {
+            background: #1e7e34 !important;
+        }
+
+        .value-display {
+            font-size: 12px;
+            color: #666;
+            text-align: right;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>String Art Simulator</h1>
+
+    <div class="container">
+        <div class="canvas-container">
+            <canvas id="canvas" width="800" height="600"></canvas>
+        </div>
+
+        <div class="controls">
+            <div class="control-section">
+                <h3>Mode</h3>
+                <div class="mode-buttons">
+                    <button id="pegMode" class="active">Place Pegs</button>
+                    <button id="stringMode">Draw String</button>
+                </div>
+            </div>
+
+            <div class="control-section">
+                <h3>String Properties</h3>
+                <div class="control-group">
+                    <label for="stringColor">Color</label>
+                    <input type="color" id="stringColor" value="#ff0000">
+                </div>
+                <div class="control-group">
+                    <label for="stringThickness">Thickness</label>
+                    <input type="range" id="stringThickness" min="1" max="5" value="2">
+                    <div class="value-display"><span id="thicknessValue">2</span>px</div>
+                </div>
+                <div class="control-group">
+                    <label for="stringOpacity">Opacity</label>
+                    <input type="range" id="stringOpacity" min="10" max="100" value="80">
+                    <div class="value-display"><span id="opacityValue">80</span>%</div>
+                </div>
+            </div>
+
+            <div class="control-section">
+                <h3>Templates</h3>
+                <div class="control-group">
+                    <label for="pinDensity">Pin Density</label>
+                    <input type="range" id="pinDensity" min="8" max="48" value="24">
+                    <div class="value-display"><span id="densityValue">24</span> pins</div>
+                </div>
+                <button id="circleTemplate">Circle Pattern</button>
+                <button id="squareTemplate">Square Pattern</button>
+                <button id="heartTemplate">Heart Pattern</button>
+            </div>
+
+            <div class="control-section">
+                <h3>Actions</h3>
+                <button id="clearCanvas">Clear All</button>
+                <button id="clearStrings">Clear Strings</button>
+                <button id="clearPegs">Clear Pegs</button>
+            </div>
+
+            <div class="control-section">
+                <h3>Save/Load</h3>
+                <button id="saveDesign">Save Design</button>
+                <button id="loadDesign">Load Design</button>
+                <input type="file" id="fileInput" accept=".json" style="display: none;">
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class StringArtSimulator {
+            constructor() {
+                this.canvas = document.getElementById('canvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.pegs = [];
+                this.strings = [];
+                this.mode = 'peg';
+                this.selectedPeg = null;
+                this.isDragging = false;
+                this.isDrawingString = false;
+                this.dragStart = null;
+                this.dragEnd = null;
+
+                this.stringColor = '#ff0000';
+                this.stringThickness = 2;
+                this.stringOpacity = 0.8;
+                this.pinDensity = 24;
+
+                this.initEventListeners();
+                this.updateControls();
+                this.draw();
+            }
+
+            initEventListeners() {
+                this.canvas.addEventListener('mousedown', this.handleMouseDown.bind(this));
+                this.canvas.addEventListener('mousemove', this.handleMouseMove.bind(this));
+                this.canvas.addEventListener('mouseup', this.handleMouseUp.bind(this));
+
+                document.getElementById('pegMode').addEventListener('click', () => this.setMode('peg'));
+                document.getElementById('stringMode').addEventListener('click', () => this.setMode('string'));
+
+                document.getElementById('stringColor').addEventListener('input', (e) => {
+                    this.stringColor = e.target.value;
+                });
+
+                document.getElementById('stringThickness').addEventListener('input', (e) => {
+                    this.stringThickness = parseInt(e.target.value);
+                    document.getElementById('thicknessValue').textContent = this.stringThickness;
+                });
+
+                document.getElementById('stringOpacity').addEventListener('input', (e) => {
+                    this.stringOpacity = parseInt(e.target.value) / 100;
+                    document.getElementById('opacityValue').textContent = e.target.value;
+                });
+
+                document.getElementById('pinDensity').addEventListener('input', (e) => {
+                    this.pinDensity = parseInt(e.target.value);
+                    document.getElementById('densityValue').textContent = this.pinDensity;
+                });
+
+                document.getElementById('circleTemplate').addEventListener('click', () => this.createCircleTemplate());
+                document.getElementById('squareTemplate').addEventListener('click', () => this.createSquareTemplate());
+                document.getElementById('heartTemplate').addEventListener('click', () => this.createHeartTemplate());
+
+                document.getElementById('clearCanvas').addEventListener('click', () => this.clearAll());
+                document.getElementById('clearStrings').addEventListener('click', () => this.clearStrings());
+                document.getElementById('clearPegs').addEventListener('click', () => this.clearPegs());
+
+                document.getElementById('saveDesign').addEventListener('click', () => this.saveDesign());
+                document.getElementById('loadDesign').addEventListener('click', () => this.loadDesign());
+                document.getElementById('fileInput').addEventListener('change', this.handleFileLoad.bind(this));
+            }
+
+            setMode(mode) {
+                this.mode = mode;
+                this.selectedPeg = null;
+                this.isDrawingString = false;
+                this.dragStart = null;
+                this.dragEnd = null;
+
+                this.pegs.forEach(peg => peg.selected = false);
+
+                document.getElementById('pegMode').classList.toggle('active', mode === 'peg');
+                document.getElementById('stringMode').classList.toggle('active', mode === 'string');
+
+                this.canvas.style.cursor = mode === 'peg' ? 'crosshair' : 'pointer';
+                this.draw();
+            }
+
+            handleMouseDown(e) {
+                const rect = this.canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+
+                if (this.mode === 'peg') {
+                    const existingPeg = this.findPegAt(x, y);
+                    if (existingPeg) {
+                        if (e.shiftKey) {
+                            this.removePeg(existingPeg);
+                        } else {
+                            this.selectedPeg = existingPeg;
+                            this.isDragging = true;
+                        }
+                    } else {
+                        this.addPeg(x, y);
+                    }
+                } else if (this.mode === 'string') {
+                    const peg = this.findPegAt(x, y);
+                    if (peg) {
+                        this.isDrawingString = true;
+                        this.dragStart = peg;
+                        this.dragEnd = { x, y };
+                        peg.selected = true;
+                    }
+                }
+
+                this.draw();
+            }
+
+            handleMouseMove(e) {
+                const rect = this.canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+
+                if (this.isDragging && this.selectedPeg && this.mode === 'peg') {
+                    this.selectedPeg.x = x;
+                    this.selectedPeg.y = y;
+                    this.draw();
+                } else if (this.isDrawingString && this.dragStart) {
+                    this.dragEnd = { x, y };
+                    this.draw();
+                }
+            }
+
+            handleMouseUp(e) {
+                const rect = this.canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+
+                if (this.isDrawingString && this.dragStart) {
+                    const endPeg = this.findPegAt(x, y);
+                    if (endPeg && endPeg !== this.dragStart) {
+                        this.addString(this.dragStart, endPeg);
+                    }
+                    this.dragStart.selected = false;
+                    this.isDrawingString = false;
+                    this.dragStart = null;
+                    this.dragEnd = null;
+                }
+
+                this.isDragging = false;
+                if (this.selectedPeg && this.mode === 'peg') {
+                    this.selectedPeg = null;
+                }
+
+                this.draw();
+            }
+
+            findPegAt(x, y) {
+                const pegRadius = 8;
+                return this.pegs.find(peg => {
+                    const dx = peg.x - x;
+                    const dy = peg.y - y;
+                    return Math.sqrt(dx * dx + dy * dy) <= pegRadius;
+                });
+            }
+
+            addPeg(x, y) {
+                this.pegs.push({
+                    x: x,
+                    y: y,
+                    selected: false
+                });
+            }
+
+            removePeg(pegToRemove) {
+                this.pegs = this.pegs.filter(peg => peg !== pegToRemove);
+                this.strings = this.strings.filter(string =>
+                    string.start !== pegToRemove && string.end !== pegToRemove
+                );
+            }
+
+            addString(startPeg, endPeg) {
+                const existingString = this.strings.find(string =>
+                    (string.start === startPeg && string.end === endPeg) ||
+                    (string.start === endPeg && string.end === startPeg)
+                );
+
+                if (!existingString) {
+                    this.strings.push({
+                        start: startPeg,
+                        end: endPeg,
+                        color: this.stringColor,
+                        thickness: this.stringThickness,
+                        opacity: this.stringOpacity
+                    });
+                }
+            }
+
+            createCircleTemplate() {
+                this.clearAll();
+                const centerX = this.canvas.width / 2;
+                const centerY = this.canvas.height / 2;
+                const radius = Math.min(centerX, centerY) - 50;
+                const numPegs = this.pinDensity;
+
+                for (let i = 0; i < numPegs; i++) {
+                    const angle = (i * 2 * Math.PI) / numPegs;
+                    const x = centerX + radius * Math.cos(angle);
+                    const y = centerY + radius * Math.sin(angle);
+                    this.addPeg(x, y);
+                }
+
+                this.draw();
+            }
+
+            createSquareTemplate() {
+                this.clearAll();
+                const size = 400;
+                const centerX = this.canvas.width / 2;
+                const centerY = this.canvas.height / 2;
+                const left = centerX - size / 2;
+                const right = centerX + size / 2;
+                const top = centerY - size / 2;
+                const bottom = centerY + size / 2;
+                const pegsPerSide = Math.max(3, Math.ceil(this.pinDensity / 4));
+
+                for (let i = 0; i < pegsPerSide; i++) {
+                    const t = i / (pegsPerSide - 1);
+                    this.addPeg(left + t * size, top);
+                    if (i < pegsPerSide - 1) this.addPeg(right, top + t * size);
+                    if (i > 0) this.addPeg(right - t * size, bottom);
+                    if (i > 0 && i < pegsPerSide - 1) this.addPeg(left, bottom - t * size);
+                }
+
+                this.draw();
+            }
+
+            createHeartTemplate() {
+                this.clearAll();
+                const centerX = this.canvas.width / 2;
+                const centerY = this.canvas.height / 2 - 50;
+                const scale = 8;
+                const numPegs = this.pinDensity;
+
+                for (let i = 0; i < numPegs; i++) {
+                    const t = (i * 2 * Math.PI) / numPegs;
+                    const x = centerX + scale * (16 * Math.pow(Math.sin(t), 3));
+                    const y = centerY - scale * (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
+                    this.addPeg(x, y);
+                }
+
+                this.draw();
+            }
+
+            clearAll() {
+                this.pegs = [];
+                this.strings = [];
+                this.selectedPeg = null;
+                this.draw();
+            }
+
+            clearStrings() {
+                this.strings = [];
+                this.selectedPeg = null;
+                this.draw();
+            }
+
+            clearPegs() {
+                this.pegs = [];
+                this.strings = [];
+                this.selectedPeg = null;
+                this.draw();
+            }
+
+            saveDesign() {
+                const design = {
+                    pegs: this.pegs.map(peg => ({ x: peg.x, y: peg.y })),
+                    strings: this.strings.map(string => ({
+                        start: this.pegs.indexOf(string.start),
+                        end: this.pegs.indexOf(string.end),
+                        color: string.color,
+                        thickness: string.thickness,
+                        opacity: string.opacity
+                    }))
+                };
+
+                const dataStr = JSON.stringify(design, null, 2);
+                const dataBlob = new Blob([dataStr], { type: 'application/json' });
+
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(dataBlob);
+                link.download = 'string-art-design.json';
+                link.click();
+            }
+
+            loadDesign() {
+                document.getElementById('fileInput').click();
+            }
+
+            handleFileLoad(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    try {
+                        const design = JSON.parse(event.target.result);
+                        this.loadDesignFromData(design);
+                    } catch (error) {
+                        alert('Error loading design file: ' + error.message);
+                    }
+                };
+                reader.readAsText(file);
+            }
+
+            loadDesignFromData(design) {
+                this.clearAll();
+
+                this.pegs = design.pegs.map(pegData => ({
+                    x: pegData.x,
+                    y: pegData.y,
+                    selected: false
+                }));
+
+                this.strings = design.strings.map(stringData => ({
+                    start: this.pegs[stringData.start],
+                    end: this.pegs[stringData.end],
+                    color: stringData.color,
+                    thickness: stringData.thickness,
+                    opacity: stringData.opacity
+                }));
+
+                this.draw();
+            }
+
+            updateControls() {
+                document.getElementById('stringColor').value = this.stringColor;
+                document.getElementById('stringThickness').value = this.stringThickness;
+                document.getElementById('stringOpacity').value = this.stringOpacity * 100;
+                document.getElementById('pinDensity').value = this.pinDensity;
+                document.getElementById('thicknessValue').textContent = this.stringThickness;
+                document.getElementById('opacityValue').textContent = Math.round(this.stringOpacity * 100);
+                document.getElementById('densityValue').textContent = this.pinDensity;
+            }
+
+            draw() {
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+                this.drawStrings();
+                this.drawDragPreview();
+                this.drawPegs();
+            }
+
+            drawStrings() {
+                this.strings.forEach(string => {
+                    this.ctx.strokeStyle = string.color;
+                    this.ctx.globalAlpha = string.opacity;
+                    this.ctx.lineWidth = string.thickness;
+                    this.ctx.lineCap = 'round';
+
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(string.start.x, string.start.y);
+                    this.ctx.lineTo(string.end.x, string.end.y);
+                    this.ctx.stroke();
+                });
+
+                this.ctx.globalAlpha = 1;
+            }
+
+            drawDragPreview() {
+                if (this.isDrawingString && this.dragStart && this.dragEnd) {
+                    this.ctx.strokeStyle = this.stringColor;
+                    this.ctx.globalAlpha = 0.5;
+                    this.ctx.lineWidth = this.stringThickness;
+                    this.ctx.lineCap = 'round';
+                    this.ctx.setLineDash([5, 5]);
+
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(this.dragStart.x, this.dragStart.y);
+                    this.ctx.lineTo(this.dragEnd.x, this.dragEnd.y);
+                    this.ctx.stroke();
+
+                    this.ctx.setLineDash([]);
+                    this.ctx.globalAlpha = 1;
+                }
+            }
+
+            drawPegs() {
+                this.pegs.forEach(peg => {
+                    this.ctx.fillStyle = peg.selected ? '#00ff00' : '#333';
+                    this.ctx.strokeStyle = '#000';
+                    this.ctx.lineWidth = 2;
+
+                    this.ctx.beginPath();
+                    this.ctx.arc(peg.x, peg.y, 6, 0, 2 * Math.PI);
+                    this.ctx.fill();
+                    this.ctx.stroke();
+                });
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            new StringArtSimulator();
+        });
+    </script>
+</body>
+
+</html>

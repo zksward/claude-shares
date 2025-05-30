@@ -1,0 +1,468 @@
+<!DOCTYPE html> <html lang=en><!--
+ Page saved with SingleFile 
+ url: file:///C:/Users/zk/development/scratch/claude-shares/gemini_2_5_ant.html 
+ saved date: Wed Mar 26 2025 21:53:29 GMT-0400 (Eastern Daylight Time)
+--><meta charset=utf-8>
+<meta name=viewport content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Ant Battle Simulator</title>
+<style>body{margin:0;overflow:hidden;font-family:sans-serif;background-color:#222;color:#fff}#ui{position:absolute;top:10px;left:10px;display:flex;flex-direction:column;gap:5px;background-color:rgba(0,0,0,0.5);padding:10px;border-radius:5px;z-index:10}#ui button{padding:8px 12px;font-size:14px;cursor:pointer;border:none;border-radius:3px;min-width:120px}.red-team-btn{background-color:#ff4444;color:white}.blue-team-btn{background-color:#4444ff;color:white}.team-toggle-btn{background-color:#888888;color:white}.red-controls,.blue-controls{flex-direction:column;gap:5px}</style>
+<meta name=referrer content=no-referrer><meta http-equiv=content-security-policy content="default-src 'none'; font-src 'self' data:; img-src 'self' data:; style-src 'unsafe-inline'; media-src 'self' data:; script-src 'unsafe-inline' data: https://unpkg.com; object-src 'self' data:; frame-src 'self' data:;"></head>
+<body class=vsc-initialized>
+ <div id=ui>
+ <button id=teamToggleBtn class="team-toggle-btn red-team-btn">Control: Red Team</button>
+ <div id=redControls class=red-controls style=display:flex>
+ <span>Red Team Spawn:</span>
+ <button id=spawnRedSoldier class=red-team-btn>Soldier</button>
+ <button id=spawnRedTank class=red-team-btn>Tank</button>
+ </div>
+ <div id=blueControls class=blue-controls style=display:none>
+ <span>Blue Team Spawn:</span>
+ <button id=spawnBlueSoldier class=blue-team-btn>Soldier</button>
+ <button id=spawnBlueTank class=blue-team-btn>Tank</button>
+ </div>
+ </div>
+ <script type=importmap>
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.164.1/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.164.1/examples/jsm/"
+            }
+        }
+    </script>
+ <script type=module>
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- Constants & Config ---
+        const ANT_TYPES = {
+            soldier: {
+                hp: 100,
+                speed: 2.5,
+                attackDamage: 10,
+                attackRange: 1.5,
+                attackCooldown: 0.8, // seconds
+                geometry: new THREE.CapsuleGeometry(0.2, 0.4, 4, 8),
+                scale: 1.0,
+            },
+            tank: {
+                hp: 250,
+                speed: 1.5,
+                attackDamage: 15,
+                attackRange: 1.8,
+                attackCooldown: 1.2,
+                geometry: new THREE.CapsuleGeometry(0.3, 0.5, 4, 8),
+                scale: 1.2,
+            }
+        };
+        const RED_COLOR = 0xff4444;
+        const BLUE_COLOR = 0x4444ff;
+        const GROUND_SIZE = 40;
+        const SPAWN_OFFSET_X = 15;
+        const SPAWN_RANDOM_Z = 10;
+        const EXPLOSION_PARTICLES = 50;
+        const EXPLOSION_DURATION = 1.0; // seconds
+        const EXPLOSION_SPEED = 5.0;
+
+        // --- Global Variables ---
+        let scene, camera, renderer, controls;
+        let clock = new THREE.Clock();
+        let ants = [];
+        let explosions = [];
+        let currentPlayerTeam = 'red';
+
+        // --- Ant Class ---
+        class Ant {
+            constructor(team, type, position) {
+                this.team = team;
+                this.type = type;
+                this.config = ANT_TYPES[type];
+
+                this.hp = this.config.hp;
+                this.maxHp = this.config.hp;
+                this.speed = this.config.speed;
+                this.attackDamage = this.config.attackDamage;
+                this.attackRange = this.config.attackRange;
+                this.attackRangeSq = this.attackRange * this.attackRange; // Use squared distance for performance
+                this.attackCooldownTime = this.config.attackCooldown;
+                this.currentAttackCooldown = 0;
+
+                const color = (team === 'red') ? RED_COLOR : BLUE_COLOR;
+                const material = new THREE.MeshStandardMaterial({ color: color });
+                this.mesh = new THREE.Mesh(this.config.geometry, material);
+                this.mesh.scale.setScalar(this.config.scale);
+                this.mesh.position.copy(position);
+                this.mesh.rotation.x = Math.PI / 2; // Lay flat initially
+                this.mesh.castShadow = true;
+                this.mesh.userData.ant = this; // Link mesh back to ant object
+
+                // Health bar
+                const healthBarGeometry = new THREE.PlaneGeometry(0.8, 0.1);
+                const healthBarMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00, side: THREE.DoubleSide });
+                this.healthBar = new THREE.Mesh(healthBarGeometry, healthBarMaterial);
+                this.healthBar.position.set(0, 0.6, 0); // Position above the ant
+                this.mesh.add(this.healthBar); // Add health bar as child
+
+                scene.add(this.mesh);
+
+                this.target = null;
+                this.state = 'idle'; // idle, moving, attacking
+            }
+
+            update(deltaTime, allAnts) {
+                if (this.hp <= 0) return; // Already dead
+
+                this.currentAttackCooldown = Math.max(0, this.currentAttackCooldown - deltaTime);
+                this.updateHealthBar();
+
+                // --- State Logic ---
+                if (!this.target || this.target.hp <= 0) {
+                    this.findTarget(allAnts);
+                    this.state = this.target ? 'moving' : 'idle';
+                }
+
+                if (this.target) {
+                    const distanceSq = this.mesh.position.distanceToSquared(this.target.mesh.position);
+
+                    if (distanceSq <= this.attackRangeSq) {
+                        // --- Attack State ---
+                        this.state = 'attacking';
+                        this.mesh.lookAt(this.target.mesh.position.x, this.mesh.position.y, this.target.mesh.position.z); // Look at target on the same Y plane
+                        if (this.currentAttackCooldown <= 0) {
+                            this.attack(this.target);
+                            this.currentAttackCooldown = this.attackCooldownTime;
+                        }
+                    } else {
+                        // --- Move State ---
+                        this.state = 'moving';
+                        this.moveTo(this.target.mesh.position, deltaTime);
+                    }
+                } else {
+                    this.state = 'idle';
+                    // Optional: Add idle behavior like slight random movement
+                }
+            }
+
+            findTarget(allAnts) {
+                let closestTarget = null;
+                let minDistanceSq = Infinity;
+
+                for (const otherAnt of allAnts) {
+                    if (otherAnt.team !== this.team && otherAnt.hp > 0) {
+                        const distanceSq = this.mesh.position.distanceToSquared(otherAnt.mesh.position);
+                        if (distanceSq < minDistanceSq) {
+                            minDistanceSq = distanceSq;
+                            closestTarget = otherAnt;
+                        }
+                    }
+                }
+                this.target = closestTarget;
+            }
+
+            moveTo(targetPosition, deltaTime) {
+                const direction = new THREE.Vector3().subVectors(targetPosition, this.mesh.position).normalize();
+                // Prevent vertical movement
+                direction.y = 0;
+                direction.normalize(); // Renormalize after zeroing Y
+
+                this.mesh.position.addScaledVector(direction, this.speed * deltaTime);
+                // Look in the direction of movement
+                const lookTargetPos = new THREE.Vector3().addVectors(this.mesh.position, direction);
+                this.mesh.lookAt(lookTargetPos.x, this.mesh.position.y, lookTargetPos.z);
+            }
+
+            attack(targetAnt) {
+                // console.log(`${this.team} ${this.type} attacks ${targetAnt.team} ${targetAnt.type}`);
+                targetAnt.takeDamage(this.attackDamage);
+            }
+
+            takeDamage(amount) {
+                this.hp -= amount;
+                // console.log(`${this.team} ${this.type} took ${amount} damage, HP: ${this.hp}`);
+                if (this.hp <= 0) {
+                    this.die();
+                }
+            }
+
+             updateHealthBar() {
+                const healthRatio = Math.max(0, this.hp / this.maxHp);
+                this.healthBar.scale.x = healthRatio;
+                // Change color based on health
+                if (healthRatio > 0.6) {
+                    this.healthBar.material.color.setHex(0x00ff00); // Green
+                } else if (healthRatio > 0.3) {
+                    this.healthBar.material.color.setHex(0xffff00); // Yellow
+                } else {
+                    this.healthBar.material.color.setHex(0xff0000); // Red
+                }
+                 // Make health bar always face camera
+                this.healthBar.quaternion.copy(camera.quaternion);
+            }
+
+            die() {
+                // console.log(`${this.team} ${this.type} died.`);
+                this.hp = 0; // Ensure HP is 0
+                createExplosion(this.mesh.position, (this.team === 'red' ? RED_COLOR : BLUE_COLOR));
+                scene.remove(this.mesh);
+                // The ant instance will be removed from the main 'ants' array in the main loop
+            }
+        }
+
+        // --- Explosion Class ---
+        class Explosion {
+            constructor(position, color) {
+                const particleCount = EXPLOSION_PARTICLES;
+                const particlesGeometry = new THREE.BufferGeometry();
+                const positions = [];
+                const velocities = [];
+                const startTimes = [];
+
+                for (let i = 0; i < particleCount; i++) {
+                    positions.push(position.x, position.y, position.z);
+
+                    // Random outward velocity
+                    const theta = Math.random() * Math.PI * 2;
+                    const phi = Math.acos((Math.random() * 2) - 1);
+                    const speed = EXPLOSION_SPEED * (0.5 + Math.random() * 0.5); // Vary speed slightly
+                    velocities.push(
+                        speed * Math.sin(phi) * Math.cos(theta),
+                        speed * Math.cos(phi),
+                        speed * Math.sin(phi) * Math.sin(theta)
+                    );
+                    startTimes.push(clock.getElapsedTime());
+                }
+
+                particlesGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+                particlesGeometry.setAttribute('velocity', new THREE.Float32BufferAttribute(velocities, 3));
+                particlesGeometry.setAttribute('startTime', new THREE.Float32BufferAttribute(startTimes, 1));
+
+                const particleMaterial = new THREE.PointsMaterial({
+                    color: color,
+                    size: 0.2,
+                    transparent: true,
+                    opacity: 0.8,
+                    sizeAttenuation: true, // Make particles smaller further away
+                });
+
+                this.points = new THREE.Points(particlesGeometry, particleMaterial);
+                this.startTime = clock.getElapsedTime();
+                this.duration = EXPLOSION_DURATION;
+
+                scene.add(this.points);
+            }
+
+            update(deltaTime) {
+                const elapsedTime = clock.getElapsedTime() - this.startTime;
+                if (elapsedTime > this.duration) {
+                    this.dispose();
+                    return false; // Indicate it should be removed
+                }
+
+                const positions = this.points.geometry.attributes.position.array;
+                const velocities = this.points.geometry.attributes.velocity.array;
+
+                for (let i = 0; i < positions.length / 3; i++) {
+                    const index = i * 3;
+                    // Update position based on velocity
+                    positions[index] += velocities[index] * deltaTime;
+                    positions[index + 1] += velocities[index + 1] * deltaTime;
+                    positions[index + 2] += velocities[index + 2] * deltaTime;
+
+                    // Apply simple gravity
+                    velocities[index + 1] -= 9.8 * deltaTime * 0.5; // Adjust gravity effect
+
+                     // Optional: Add drag
+                    const drag = 0.98;
+                    velocities[index] *= drag;
+                    velocities[index + 1] *= drag;
+                    velocities[index + 2] *= drag;
+                }
+
+                // Fade out
+                this.points.material.opacity = 0.8 * (1.0 - elapsedTime / this.duration);
+
+                this.points.geometry.attributes.position.needsUpdate = true;
+                return true; // Indicate it's still active
+            }
+
+            dispose() {
+                scene.remove(this.points);
+                this.points.geometry.dispose();
+                this.points.material.dispose();
+            }
+        }
+
+        // --- Initialization ---
+        function init() {
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87ceeb); // Sky blue background
+            scene.fog = new THREE.Fog(0x87ceeb, GROUND_SIZE * 0.5, GROUND_SIZE * 1.5);
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 15, 20); // Positioned further back and higher up
+            camera.lookAt(0, 0, 0);
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio); // For sharper rendering on high DPI screens
+            renderer.shadowMap.enabled = true; // Enable shadows
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            document.body.appendChild(renderer.domElement);
+
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
+            directionalLight.position.set(10, 20, 10);
+            directionalLight.castShadow = true;
+            // Configure shadow properties
+            directionalLight.shadow.mapSize.width = 1024;
+            directionalLight.shadow.mapSize.height = 1024;
+            directionalLight.shadow.camera.near = 0.5;
+            directionalLight.shadow.camera.far = 50;
+            directionalLight.shadow.camera.left = -GROUND_SIZE / 2;
+            directionalLight.shadow.camera.right = GROUND_SIZE / 2;
+            directionalLight.shadow.camera.top = GROUND_SIZE / 2;
+            directionalLight.shadow.camera.bottom = -GROUND_SIZE / 2;
+            scene.add(directionalLight);
+            // const shadowHelper = new THREE.CameraHelper(directionalLight.shadow.camera); // Optional: Visualize shadow camera
+            // scene.add(shadowHelper);
+
+
+            // Ground
+            const groundGeometry = new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE);
+            const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x8BC34A, side: THREE.DoubleSide }); // Greenish ground
+            const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+            ground.rotation.x = -Math.PI / 2; // Rotate flat
+            ground.receiveShadow = true;
+            scene.add(ground);
+
+            // Controls
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true; // Smooth camera movement
+            controls.dampingFactor = 0.05;
+            controls.screenSpacePanning = false; // Pan parallel to ground plane
+            controls.maxPolarAngle = Math.PI / 2 - 0.1; // Prevent camera going below ground
+            controls.minDistance = 5;
+            controls.maxDistance = 50;
+
+            // Event Listeners
+            window.addEventListener('resize', onWindowResize, false);
+            setupUI();
+        }
+
+        // --- UI Setup ---
+        function setupUI() {
+            const teamToggleBtn = document.getElementById('teamToggleBtn');
+            const redControlsDiv = document.getElementById('redControls');
+            const blueControlsDiv = document.getElementById('blueControls');
+
+            const spawnRedSoldierBtn = document.getElementById('spawnRedSoldier');
+            const spawnRedTankBtn = document.getElementById('spawnRedTank');
+            const spawnBlueSoldierBtn = document.getElementById('spawnBlueSoldier');
+            const spawnBlueTankBtn = document.getElementById('spawnBlueTank');
+
+            teamToggleBtn.addEventListener('click', () => { // Use click for broader compatibility
+                if (currentPlayerTeam === 'red') {
+                    currentPlayerTeam = 'blue';
+                    teamToggleBtn.textContent = 'Control: Blue Team';
+                    teamToggleBtn.classList.remove('red-team-btn');
+                    teamToggleBtn.classList.add('blue-team-btn');
+                    redControlsDiv.style.display = 'none';
+                    blueControlsDiv.style.display = 'flex';
+                } else {
+                    currentPlayerTeam = 'red';
+                    teamToggleBtn.textContent = 'Control: Red Team';
+                    teamToggleBtn.classList.remove('blue-team-btn');
+                    teamToggleBtn.classList.add('red-team-btn');
+                    redControlsDiv.style.display = 'flex';
+                    blueControlsDiv.style.display = 'none';
+                }
+            });
+
+            // Use 'click' which works for both mouse and touch (with browser handling)
+            spawnRedSoldierBtn.addEventListener('click', () => spawnAnt('red', 'soldier'));
+            spawnRedTankBtn.addEventListener('click', () => spawnAnt('red', 'tank'));
+            spawnBlueSoldierBtn.addEventListener('click', () => spawnAnt('blue', 'soldier'));
+            spawnBlueTankBtn.addEventListener('click', () => spawnAnt('blue', 'tank'));
+
+            // Initial state based on currentPlayerTeam
+             if (currentPlayerTeam === 'red') {
+                teamToggleBtn.classList.add('red-team-btn');
+                redControlsDiv.style.display = 'flex';
+                blueControlsDiv.style.display = 'none';
+            } else {
+                 teamToggleBtn.classList.add('blue-team-btn');
+                 redControlsDiv.style.display = 'none';
+                 blueControlsDiv.style.display = 'flex';
+            }
+        }
+
+        // --- Spawn Logic ---
+        function spawnAnt(team, type) {
+            const xPos = (team === 'red' ? -SPAWN_OFFSET_X : SPAWN_OFFSET_X) + (Math.random() - 0.5) * 5;
+            const zPos = (Math.random() - 0.5) * SPAWN_RANDOM_Z;
+            const yPos = 0.3; // Slightly above ground
+            const position = new THREE.Vector3(xPos, yPos, zPos);
+
+            const newAnt = new Ant(team, type, position);
+            ants.push(newAnt);
+        }
+
+        // --- Explosion Creation ---
+        function createExplosion(position, color) {
+            const explosion = new Explosion(position, color);
+            explosions.push(explosion);
+        }
+
+        // --- Window Resize ---
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- Animation Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const deltaTime = clock.getDelta();
+
+            // Update Controls
+            controls.update();
+
+            // Update Ants
+            // Iterate backwards for safe removal
+            for (let i = ants.length - 1; i >= 0; i--) {
+                const ant = ants[i];
+                if (ant.hp <= 0) {
+                    // Already handled death effects in ant.die(), just remove from array
+                    ants.splice(i, 1);
+                } else {
+                    ant.update(deltaTime, ants);
+                }
+            }
+
+             // Update Explosions
+            // Iterate backwards for safe removal
+            for (let i = explosions.length - 1; i >= 0; i--) {
+                const explosion = explosions[i];
+                if (!explosion.update(deltaTime)) { // update returns false when done
+                    explosions.splice(i, 1);
+                }
+            }
+
+
+            // Render
+            renderer.render(scene, camera);
+        }
+
+        // --- Start ---
+        init();
+        animate();
+
+    </script>
+<canvas style="display:block;width:2029px;height:871px;touch-action:none;background-blend-mode:normal!important;background-clip:content-box!important;background-position:center center!important;background-color:rgba(0,0,0,0)!important;background-image:url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAB+0AAANnCAYAAAD0tcovAAAgAElEQVR4XuzZMQ0AAAzDsJU/6cHI4xGoZO3LzhEgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQKJwJJVowQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgMCJ9p6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAANEs9AsAACAASURBVAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAwBWZ4AAAIABJREFUAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9n6AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhEAqJ9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIEDg27NjEgAAAIZh/l1XRp8oGIR9JUCAAAECor0PECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgACBSUC0n+DNEiBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAAB0d4HCBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIDAJCDaT/BmCRAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQICAaO8DBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIEBgEhDtJ3izBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIEBAtPcBAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECAwCYj2E7xZAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECAg2vsAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBCYBET7Cd4sAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAQ7X2AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhMAqL9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9j5AgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQmAdF+gjdLgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgREex8gQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQKTgGg/wZslQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQKivQ8QIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAIFJQLSf4M0SIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAHR3gcIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgMAkINpP8GYJECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgIBo7wMECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQGASEO0neLMECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQEC09wECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIDAJiPYTvFkCBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQICDa+wABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIEJgERPsJ3iwBAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIEBDtfYAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECEwCov0Eb5YAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECIj2PkCAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBCYB0X6CN0uAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBER7HyBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABApOAaD/BmyVAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAqK9DxAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAgUlAtJ/gzRIgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAdHeBwgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAwCQg2k/wZgkQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAgGjvAwQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAYBIQ7Sd4swQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAQLT3AQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgMAmI9hO8WQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgINr7AAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQmARE+wneLAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQEO19gAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQITAKi/QRvlgABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIiPY+QIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIEJgHRfoI3S4AAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIERHsfIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECk4BoP8GbJUCAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECor0PECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgACBSUC0n+DNEiBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAAB0d4HCBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIDAJCDaT/BmCRAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQICAaO8DBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIEBgEhDtJ3izBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIEBAtPcBAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECAwCYj2E7xZAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECAg2vsAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBCYBET7Cd4sAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAQ7X2AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhMAqL9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9j5AgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQmAdF+gjdLgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgREex8gQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQKTgGg/wZslQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQKivQ8QIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAIFJQLSf4M0SIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAHR3gcIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgMAkINpP8GYJECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgIBo7wMECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQGASEO0neLMECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQEC09wECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIDAJiPYTvFkCBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQICDa+wABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIEJgERPsJ3iwBAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIEBDtfYAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECEwCov0Eb5YAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECIj2PkCAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBCYB0X6CN0uAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBER7HyBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABApOAaD/BmyVAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAqK9DxAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAgUlAtJ/gzRIgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAdHeBwgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAwCQg2k/wZgkQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAgGjvAwQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAYBIQ7Sd4swQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAQLT3AQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgMAmI9hO8WQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgINr7AAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQmARE+wneLAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQEO19gAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQITAKi/QRvlgABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIiPY+QIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIEJgHRfoI3S4AAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIERHsfIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECk4BoP8GbJUCAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECor0PECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgACBSUC0n+DNEiBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAAB0d4HCBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIDAJCDaT/BmCRAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQICAaO8DBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIEBgEhDtJ3izBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIEBAtPcBAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECAwCYj2E7xZAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECAg2vsAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBCYBET7Cd4sAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAQ7X2AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhMAqL9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9j5AgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQmAdF+gjdLgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgREex8gQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQKTgGg/wZslQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQKivQ8QIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAIFJQLSf4M0SIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAHR3gcIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgMAkINpP8GYJECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgIBo7wMECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQGASEO0neLMECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQEC09wECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIDAJiPYTvFkCBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQICDa+wABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIEJgERPsJ3iwBAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIEBDtfYAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECEwCov0Eb5YAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECIj2PkCAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBCYB0X6CN0uAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBER7HyBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABApOAaD/BmyVAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAqK9DxAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAgUlAtJ/gzRIgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAdHeBwgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAwCQg2k/wZgkQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAgGjvAwQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAYBIQ7Sd4swQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAQLT3AQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgMAmI9hO8WQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgINr7AAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQmARE+wneLAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQEO19gAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQITAKi/QRvlgABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIiPY+QIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIEJgHRfoI3S4AAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIERHsfIECAAAECBAgQIECAAAECBAijcdRIAAAfrUlEQVQQIECAAAECBAgQIECAAAECk4BoP8GbJUCAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECor0PECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgACBSUC0n+DNEiBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAAB0d4HCBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIDAJCDaT/BmCRAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQICAaO8DBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIEBgEhDtJ3izBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIEBAtPcBAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECAwCYj2E7xZAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECAg2vsAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBCYBET7Cd4sAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAQ7X2AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhMAqL9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9j5AgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQmAdF+gjdLgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgREex8gQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQKTgGg/wZslQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQKivQ8QIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAIFJQLSf4M0SIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAHR3gcIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgMAkINpP8GYJECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgIBo7wMECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQGASEO0neLMECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQEC09wECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIDAJiPYTvFkCBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQICDa+wABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIEJgERPsJ3iwBAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIEBDtfYAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECEwCov0Eb5YAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECIj2PkCAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBCYB0X6CN0uAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBER7HyBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABApOAaD/BmyVAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAqK9DxAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAgUlAtJ/gzRIgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAdHeBwgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAwCQg2k/wZgkQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAgGjvAwQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAYBIQ7Sd4swQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAQLT3AQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgMAmI9hO8WQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgINr7AAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQmARE+wneLAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQEO19gAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQITAKi/QRvlgABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIiPY+QIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIEJgHRfoI3S4AAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIERHsfIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECk4BoP8GbJUCAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECor0PECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgACBSUC0n+DNEiBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAAB0d4HCBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIDAJCDaT/BmCRAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQICAaO8DBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIEBgEhDtJ3izBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIEBAtPcBAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECAwCYj2E7xZAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECAg2vsAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBCYBET7Cd4sAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAQ7X2AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhMAqL9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9j5AgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQmAdF+gjdLgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgREex8gQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQKTgGg/wZslQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQKivQ8QIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAIFJQLSf4M0SIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAHR3gcIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgMAkINpP8GYJECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgIBo7wMECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQGASEO0neLMECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQEC09wECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIDAJiPYTvFkCBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQICDa+wABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIEJgERPsJ3iwBAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIEBDtfYAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECEwCov0Eb5YAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECIj2PkCAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBCYB0X6CN0uAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBER7HyBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABApOAaD/BmyVAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAqK9DxAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAgUlAtJ/gzRIgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAdHeBwgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAwCQg2k/wZgkQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAgGjvAwQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAYBIQ7Sd4swQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAQLT3AQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgMAmI9hO8WQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgINr7AAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQmARE+wneLAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQEO19gAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQITAKi/QRvlgABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIiPY+QIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIEJgHRfoI3S4AAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIERHsfIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECk4BoP8GbJUCAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECor0PECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgACBSUC0n+DNEiBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAAB0d4HCBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIDAJCDaT/BmCRAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQICAaO8DBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIEBgEhDtJ3izBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIEBAtPcBAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECAwCYj2E7xZAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECAg2vsAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBCYBET7Cd4sAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAQ7X2AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhMAqL9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9j5AgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQmAdF+gjdLgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgREex8gQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQKTgGg/wZslQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQKivQ8QIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAIFJQLSf4M0SIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAHR3gcIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgMAkINpP8GYJECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgIBo7wMECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQGASEO0neLMECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQEC09wECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIDAJiPYTvFkCBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQICDa+wABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIEJgERPsJ3iwBAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIEBDtfYAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECEwCov0Eb5YAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECIj2PkCAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBCYB0X6CN0uAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBER7HyBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABApOAaD/BmyVAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAqK9DxAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAgUlAtJ/gzRIgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAdHeBwgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAwCQg2k/wZgkQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAgGjvAwQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAYBIQ7Sd4swQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAQLT3AQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgMAmI9hO8WQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgINr7AAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQmARE+wneLAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQEO19gAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQITAKi/QRvlgABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIiPY+QIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIEJgHRfoI3S4AAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIERHsfIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECk4BoP8GbJUCAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECor0PECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgACBSUC0n+DNEiBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAAB0d4HCBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIDAJCDaT/BmCRAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQICAaO8DBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIEBgEhDtJ3izBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIEBAtPcBAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECAwCYj2E7xZAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECAg2vsAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBCYBET7Cd4sAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAQ7X2AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhMAqL9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9j5AgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQmAdF+gjdLgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgREex8gQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQKTgGg/wZslQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQKivQ8QIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAIFJQLSf4M0SIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAHR3gcIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgMAkINpP8GYJECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgIBo7wMECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQGASEO0neLMECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQEC09wECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIDAJiPYTvFkCBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQICDa+wABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIEJgERPsJ3iwBAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIEBDtfYAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECEwCov0Eb5YAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECIj2PkCAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBCYB0X6CN0uAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBER7HyBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABApOAaD/BmyVAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAqK9DxAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAgUlAtJ/gzRIgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAdHeBwgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAwCQg2k/wZgkQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAgGjvAwQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAYBIQ7Sd4swQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAQLT3AQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgMAmI9hO8WQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgINr7AAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQmARE+wneLAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQEO19gAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQITAKi/QRvlgABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIiPY+QIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIEJgHRfoI3S4AAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIERHsfIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECk4BoP8GbJUCAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECor0PECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgACBSUC0n+DNEiBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAAB0d4HCBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIDAJCDaT/BmCRAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQICAaO8DBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIEBgEhDtJ3izBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIEBAtPcBAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECAwCYj2E7xZAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECAg2vsAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBCYBET7Cd4sAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAQ7X2AAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAhMAqL9BG+WAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAiI9j5AgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQmAdF+gjdLgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgREex8gQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQKTgGg/wZslQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQKivQ8QIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAIFJQLSf4M0SIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAHR3gcIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgMAkINpP8GYJECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgIBo7wMECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQGASEO0neLMECBAgQIAAAQIECBAgQIAAAQIECBAgQIAAAQIECBAgQEC09wECBAgQIECAAAECBAgQIECAAAECBAgQIECAAAECBAgQIDAJBJMOA2jwgbbfAAAAAElFTkSuQmCC)!important;background-size:100% 100%!important;background-origin:content-box!important;background-repeat:no-repeat!important" data-engine="three.js r164" width=2029 height=871></canvas>
